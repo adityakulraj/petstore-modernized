@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: petstore-modernized
+  profiles:
+    active: ${APP_STORE:oracle}
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+app:
+  store: ${APP_STORE:oracle}
+  demo:
+    username: ${DEMO_USERNAME:alice}
+    password: ${DEMO_PASSWORD:petstore-demo}
+
+server:
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when-authorized
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+logging:
+  pattern:
+    level: "%5p [correlationId:%X{correlationId:-none}]"
+  level:
+    org.springframework.security: INFO

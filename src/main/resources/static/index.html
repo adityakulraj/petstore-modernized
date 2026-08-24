@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Modernized Java PetStore demo">
+    <title>PetStore Modernized</title>
+    <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<header class="topbar">
+    <a class="brand" href="#catalog" aria-label="PetStore home"><span>Pet</span>Store</a>
+    <nav aria-label="Primary navigation">
+        <button class="nav-link" data-view="catalog">Catalog</button>
+        <button class="nav-link" data-view="cart">Cart <span id="cart-count" class="badge">0</span></button>
+        <button class="nav-link" data-view="orders">Orders</button>
+    </nav>
+    <div id="session-actions"></div>
+</header>
+
+<main>
+    <section class="hero">
+        <div>
+            <p class="eyebrow">JAVA 21 · DUAL DATA STORE</p>
+            <h1>Find a companion<br>for every kind of home.</h1>
+            <p>A modern take on the Java Pet Store, backed by either Oracle or MongoDB.</p>
+            <button class="primary" data-view="catalog">Explore the catalog</button>
+        </div>
+        <div class="hero-art" role="img" aria-label="Decorative pet illustration">
+            <div class="orb orb-one"></div><div class="orb orb-two"></div><span>🐾</span>
+        </div>
+    </section>
+
+    <section id="catalog" class="view content-section">
+        <div class="section-heading">
+            <div><p class="eyebrow">CURATED COMPANIONS</p><h2>Catalog</h2></div>
+            <div class="filters"><input id="search" type="search" placeholder="Search pets" aria-label="Search catalog"><select id="category" aria-label="Filter category"><option value="">All categories</option></select></div>
+        </div>
+        <div id="product-grid" class="product-grid" aria-live="polite"></div>
+    </section>
+
+    <section id="cart" class="view content-section hidden">
+        <div class="section-heading"><div><p class="eyebrow">READY WHEN YOU ARE</p><h2>Your cart</h2></div></div>
+        <div id="cart-panel"></div>
+    </section>
+
+    <section id="orders" class="view content-section hidden">
+        <div class="section-heading"><div><p class="eyebrow">PURCHASE HISTORY</p><h2>Your orders</h2></div></div>
+        <div id="orders-panel"></div>
+    </section>
+</main>
+
+<dialog id="checkout-dialog">
+    <form id="checkout-form">
+        <div class="dialog-heading"><div><p class="eyebrow">SECURE CHECKOUT</p><h2>Shipping address</h2></div><button type="button" class="icon-button" id="close-checkout" aria-label="Close">×</button></div>
+        <div class="form-grid">
+            <label class="wide">Full name<input name="fullName" value="Alice Petlover" required maxlength="100"></label>
+            <label class="wide">Address line 1<input name="line1" value="100 Modernization Way" required maxlength="150"></label>
+            <label class="wide">Address line 2<input name="line2" maxlength="150"></label>
+            <label>City<input name="city" value="Pune" required maxlength="80"></label>
+            <label>State<input name="state" value="Maharashtra" required maxlength="80"></label>
+            <label>Postal code<input name="postalCode" value="411001" required maxlength="20"></label>
+            <label>Country<input name="country" value="India" required maxlength="80"></label>
+        </div>
+        <button class="primary full-width" type="submit">Place order once</button>
+    </form>
+</dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="/assets/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+spring:
+  config:
+    activate:
+      on-profile: mongo
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+      - org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration
+  mongodb:
+    uri: ${MONGODB_URI:mongodb://localhost:27017/petstore?replicaSet=rs0}
+  data:
+    mongodb:
+      auto-index-creation: true
