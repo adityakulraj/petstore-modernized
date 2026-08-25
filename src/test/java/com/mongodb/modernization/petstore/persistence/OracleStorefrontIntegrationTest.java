@@ -7,11 +7,14 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.oracle.OracleContainer;
 
+import java.time.Duration;
+
 @SpringBootTest(properties = {"spring.profiles.active=oracle", "app.store=oracle", "spring.jpa.hibernate.ddl-auto=create-drop"})
 @Testcontainers(disabledWithoutDocker = true)
 class OracleStorefrontIntegrationTest extends StorefrontStoreContract {
     @Container
-    static final OracleContainer ORACLE = new OracleContainer("gvenzl/oracle-free:23.26.2-slim-faststart");
+    static final OracleContainer ORACLE = new OracleContainer("gvenzl/oracle-free:23.26.2-slim-faststart")
+            .withStartupTimeout(Duration.ofMinutes(5));
 
     @DynamicPropertySource
     static void oracleProperties(DynamicPropertyRegistry registry) {
