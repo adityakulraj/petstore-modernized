@@ -9,7 +9,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   analyze:
@@ -18,19 +17,34 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: ["java-kotlin", "javascript-typescript"]
+        include:
+          - language: java-kotlin
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        if: matrix.language == 'java-kotlin'
         with:
           distribution: temurin
           java-version: "21"
           cache: maven
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
-          build-mode: manual
+          build-mode: ${{ matrix.build-mode }}
       - name: Compile Java application
         if: matrix.language == 'java-kotlin'
         run: ./mvnw -B -ntp -DskipTests package
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
+        with:
+          # This is a private personal repository without GitHub Code Security licensing.
+          # Run the analysis locally and retain SARIF instead of failing on the unavailable upload API.
+          upload: never
+          output: codeql-results
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codeql-${{ matrix.language }}
+          path: codeql-results/
+          if-no-files-found: error
