@@ -6,12 +6,16 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.mongodb.MongoDBContainer;
+import org.testcontainers.utility.DockerImageName;
 
 @SpringBootTest(properties = {"spring.profiles.active=mongo", "app.store=mongo"})
 @Testcontainers(disabledWithoutDocker = true)
 class MongoStorefrontIntegrationTest extends StorefrontStoreContract {
     @Container
-    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:8.2.11").withReplicaSet();
+    // Google's official Docker Hub mirror avoids local proxy/certificate failures without changing the image contents.
+    static final MongoDBContainer MONGO = new MongoDBContainer(
+            DockerImageName.parse("mirror.gcr.io/library/mongo:8.2.11").asCompatibleSubstituteFor("mongo"))
+            .withReplicaSet();
 
     @DynamicPropertySource
     static void mongoProperties(DynamicPropertyRegistry registry) {

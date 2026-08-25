@@ -5,6 +5,8 @@ import com.mongodb.modernization.petstore.catalog.domain.Product;
 import com.mongodb.modernization.petstore.orders.application.DuplicateCheckoutException;
 import com.mongodb.modernization.petstore.orders.domain.Order;
 import com.mongodb.modernization.petstore.shared.domain.Address;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Service;
@@ -13,6 +15,7 @@ import java.util.List;
 
 @Service
 public class StorefrontService implements ApplicationRunner {
+    private static final Logger LOG = LoggerFactory.getLogger(StorefrontService.class);
     private final StorefrontStore store;
 
     public StorefrontService(StorefrontStore store) { this.store = store; }
@@ -21,24 +24,62 @@ public class StorefrontService implements ApplicationRunner {
     public Product product(String id) { return store.product(id).orElseThrow(() -> new NotFoundException("Unknown product " + id)); }
     public Cart cart(String customerId) { return store.cart(customerId); }
     public Cart add(String customerId, long version, String productId, int quantity) {
-        return store.addToCart(customerId, version, productId, quantity);
+        var cart = store.addToCart(customerId, version, productId, quantity);
+        logCartMutation("cart.item.added", customerId, productId, quantity, cart.version());
+        return cart;
     }
     public Cart update(String customerId, long version, String productId, int quantity) {
-        return store.updateCart(customerId, version, productId, quantity);
+        var cart = store.updateCart(customerId, version, productId, quantity);
+        logCartMutation("cart.item.updated", customerId, productId, quantity, cart.version());
+        return cart;
     }
     public Cart remove(String customerId, long version, String productId) {
-        return store.removeFromCart(customerId, version, productId);
+        var cart = store.removeFromCart(customerId, version, productId);
+        logCartMutation("cart.item.removed", customerId, productId, 0, cart.version());
+        return cart;
     }
     public Order checkout(String customerId, long version, String key, Address address) {
-        return store.orderByIdempotencyKey(customerId, key).orElseGet(() -> {
-            try {
-                return store.checkout(customerId, version, key, address);
-            } catch (DuplicateCheckoutException duplicate) {
-                return store.orderByIdempotencyKey(customerId, key).orElseThrow(() -> duplicate);
-            }
-        });
+        var existing = store.orderByIdempotencyKey(customerId, key);
+        if (existing.isPresent()) {
+            logOrder("order.idempotency.replayed", existing.get());
+            return existing.get();
+        }
+        Order order;
+        var replayed = false;
+        try {
+            order = store.checkout(customerId, version, key, address);
+        } catch (DuplicateCheckoutException duplicate) {
+            // A concurrent request can win the unique idempotency-key insert after our first lookup.
+            order = store.orderByIdempotencyKey(customerId, key).orElseThrow(() -> duplicate);
+            replayed = true;
+        }
+        logOrder(replayed ? "order.idempotency.replayed" : "order.placed", order);
+        return order;
     }
     public List<Order> orders(String customerId) { return store.orders(customerId); }
 
-    @Override public void run(ApplicationArguments args) { store.seedIfEmpty(); }
+    @Override public void run(ApplicationArguments args) {
+        store.seedIfEmpty();
+        LOG.atInfo().addKeyValue("event", "catalog.seed.checked").log("Catalog seed check completed");
+    }
+
+    private static void logCartMutation(String event, String customerId, String productId, int quantity, long version) {
+        LOG.atInfo()
+                .addKeyValue("event", event)
+                .addKeyValue("customerId", customerId)
+                .addKeyValue("productId", productId)
+                .addKeyValue("quantity", quantity)
+                .addKeyValue("cartVersion", version)
+                .log("Cart mutation completed");
+    }
+
+    private static void logOrder(String event, Order order) {
+        LOG.atInfo()
+                .addKeyValue("event", event)
+                .addKeyValue("orderId", order.id())
+                .addKeyValue("customerId", order.customerId())
+                .addKeyValue("lineCount", order.lines().size())
+                .addKeyValue("total", order.total())
+                .log("Order operation completed");
+    }
 }

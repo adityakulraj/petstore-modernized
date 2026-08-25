@@ -88,6 +88,7 @@ class OracleStorefrontStore implements StorefrontStore {
         requireVersion(cart.version(), expectedCartVersion);
         if (cart.lines().isEmpty()) throw new StoreConflictException("Cart is empty");
         for (var line : cart.lines()) {
+            // The stock predicate and this transaction prevent overselling without a JVM-wide lock.
             if (products.decrementStock(line.productId(), line.quantity()) != 1) {
                 throw new InsufficientStockException(line.productId());
             }

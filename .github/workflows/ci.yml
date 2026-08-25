@@ -38,17 +38,29 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - name: Start MongoDB implementation
-        run: docker compose --profile mongo up --build --wait
-      - run: npm run e2e
-      - name: Application logs
-        if: failure()
-        run: docker compose --profile mongo logs --no-color
-      - name: Stop stack
-        if: always()
-        run: docker compose --profile mongo down
+      - name: Run MongoDB API and browser E2E contracts
+        run: npm run e2e:mongo
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: playwright-report
+          name: playwright-report-mongo
+          path: playwright-report/
+
+  e2e-oracle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run Oracle API and browser E2E contracts
+        run: npm run e2e:oracle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-oracle
           path: playwright-report/

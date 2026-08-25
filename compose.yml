@@ -8,6 +8,11 @@ x-app-common: &app-common
     DEMO_PASSWORD: ${DEMO_PASSWORD:-petstore-demo}
     DEMO_ADDITIONAL_USERNAME: ${DEMO_ADDITIONAL_USERNAME:-aditya}
     DEMO_ADDITIONAL_PASSWORD: ${DEMO_ADDITIONAL_PASSWORD:-password}
+    ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+    ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+    LOG_FILE: /app/logs/petstore.log
+  volumes:
+    - app-logs:/app/logs
   healthcheck:
     test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/actuator/health/readiness"]
     interval: 10s
@@ -17,14 +22,14 @@ x-app-common: &app-common
 
 services:
   oracle:
-    image: gvenzl/oracle-free:23.26.2-slim-faststart
+    image: ghcr.io/gvenzl/oracle-free:23.26.2-slim
     profiles: ["oracle"]
     environment:
       ORACLE_PASSWORD: ${ORACLE_ADMIN_PASSWORD:-oracle_local_admin}
       APP_USER: ${ORACLE_USERNAME:-petstore}
       APP_USER_PASSWORD: ${ORACLE_PASSWORD:-petstore_local_only}
     ports:
-      - "1521:1521"
+      - "${ORACLE_PORT:-1521}:1521"
     volumes:
       - oracle-data:/opt/oracle/oradata
     healthcheck:
@@ -35,11 +40,11 @@ services:
       start_period: 30s
 
   mongo:
-    image: mongo:8.2.11
+    image: mirror.gcr.io/library/mongo:8.2.11
     profiles: ["mongo"]
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
     ports:
-      - "27017:27017"
+      - "${MONGO_PORT:-27017}:27017"
     volumes:
       - mongo-data:/data/db
     healthcheck:
@@ -61,8 +66,11 @@ services:
       DEMO_PASSWORD: ${DEMO_PASSWORD:-petstore-demo}
       DEMO_ADDITIONAL_USERNAME: ${DEMO_ADDITIONAL_USERNAME:-aditya}
       DEMO_ADDITIONAL_PASSWORD: ${DEMO_ADDITIONAL_PASSWORD:-password}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      LOG_FILE: /app/logs/petstore.log
     ports:
-      - "8080:8080"
+      - "${APP_PORT:-8080}:8080"
     depends_on:
       oracle:
         condition: service_healthy
@@ -77,8 +85,11 @@ services:
       DEMO_PASSWORD: ${DEMO_PASSWORD:-petstore-demo}
       DEMO_ADDITIONAL_USERNAME: ${DEMO_ADDITIONAL_USERNAME:-aditya}
       DEMO_ADDITIONAL_PASSWORD: ${DEMO_ADDITIONAL_PASSWORD:-password}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      LOG_FILE: /app/logs/petstore.log
     ports:
-      - "8080:8080"
+      - "${APP_PORT:-8080}:8080"
     depends_on:
       mongo:
         condition: service_healthy
@@ -86,3 +97,4 @@ services:
 volumes:
   oracle-data:
   mongo-data:
+  app-logs:

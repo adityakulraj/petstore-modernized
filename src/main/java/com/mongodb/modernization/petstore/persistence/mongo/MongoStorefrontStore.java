@@ -19,6 +19,8 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +40,7 @@ import java.util.function.UnaryOperator;
 @Repository
 @Profile("mongo")
 class MongoStorefrontStore implements StorefrontStore {
+    private static final Logger LOG = LoggerFactory.getLogger(MongoStorefrontStore.class);
     private static final int MAX_TRANSACTION_ATTEMPTS = 5;
     private final MongoProductRepository products;
     private final MongoCartRepository carts;
@@ -101,6 +104,11 @@ class MongoStorefrontStore implements StorefrontStore {
                 return transactions.execute(status -> checkoutOnce(customerId, expectedCartVersion, key, address));
             } catch (RuntimeException failure) {
                 if (attempt == MAX_TRANSACTION_ATTEMPTS || !isRetryableTransactionError(failure)) throw failure;
+                LOG.atWarn()
+                        .addKeyValue("event", "mongo.transaction.retry")
+                        .addKeyValue("customerId", customerId)
+                        .addKeyValue("attempt", attempt)
+                        .log("Retrying transient checkout transaction");
                 backoff(attempt);
             }
         }
@@ -114,6 +122,7 @@ class MongoStorefrontStore implements StorefrontStore {
         requireVersion(cart.version(), expectedCartVersion);
         if (cart.lines().isEmpty()) throw new StoreConflictException("Cart is empty");
         for (var line : cart.lines()) {
+            // The conditional update is the inventory compare-and-set; the surrounding transaction rolls all lines back.
             var query = Query.query(Criteria.where("_id").is(line.productId()).and("stock").gte(line.quantity()));
             var result = template.updateFirst(query, new Update().inc("stock", -line.quantity()).inc("version", 1), ProductDocument.class);
             if (result.getModifiedCount() != 1) throw new InsufficientStockException(line.productId());

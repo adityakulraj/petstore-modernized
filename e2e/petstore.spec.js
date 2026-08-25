@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./support/fixtures');
 
 test('customer can browse, sign in, add to cart, checkout, and see order history', async ({ page }) => {
   await page.goto('/');

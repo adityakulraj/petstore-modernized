@@ -1,5 +1,6 @@
 package com.mongodb.modernization.petstore.config;
 
+import org.springframework.security.config.Customizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -29,7 +30,11 @@ public class SecurityConfig {
                 .password(encoder.encode(demo.additionalPassword()))
                 .roles("CUSTOMER")
                 .build();
-        return new InMemoryUserDetailsManager(primary, additional);
+        var admin = User.withUsername(properties.admin().username())
+                .password(encoder.encode(properties.admin().password()))
+                .roles("ADMIN")
+                .build();
+        return new InMemoryUserDetailsManager(primary, additional, admin);
     }
 
     @Bean
@@ -38,9 +43,12 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/", "/index.html", "/assets/**", "/api/v1/catalog/**", "/api/v1/session",
                                 "/actuator/health/**", "/error").permitAll()
+                        .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                         .requestMatchers("/actuator/**").hasRole("CUSTOMER")
                         .anyRequest().authenticated())
                 .formLogin(form -> form.defaultSuccessUrl("/", true))
+                // Basic auth makes the read-only admin log endpoint convenient for local curl diagnostics.
+                .httpBasic(Customizer.withDefaults())
                 .logout(logout -> logout.logoutSuccessUrl("/"))
                 .csrf(csrf -> csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse()))
                 .headers(headers -> headers.contentSecurityPolicy(csp -> csp.policyDirectives(

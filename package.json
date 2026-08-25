@@ -4,6 +4,12 @@
   "private": true,
   "scripts": {
     "e2e": "playwright test",
+    "e2e:api": "playwright test e2e/api-contract.spec.js",
+    "e2e:api:mongo": "./scripts/run-e2e.sh mongo api",
+    "e2e:api:oracle": "./scripts/run-e2e.sh oracle api",
+    "e2e:api:all": "npm run e2e:api:mongo && npm run e2e:api:oracle",
+    "e2e:mongo": "./scripts/run-e2e.sh mongo all",
+    "e2e:oracle": "./scripts/run-e2e.sh oracle all",
     "e2e:ui": "playwright test --ui"
   },
   "devDependencies": {

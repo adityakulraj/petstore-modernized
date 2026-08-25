@@ -7,6 +7,8 @@ module.exports = defineConfig({
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
+  // The isolation fixture resets one disposable database; request-level race tests create their own concurrency.
+  workers: 1,
   reporter: process.env.CI ? [['html', { open: 'never' }], ['github']] : 'list',
   use: {
     baseURL: process.env.BASE_URL || 'http://localhost:8080',

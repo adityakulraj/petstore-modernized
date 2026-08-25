@@ -6,6 +6,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.oracle.OracleContainer;
+import org.testcontainers.utility.DockerImageName;
 
 import java.time.Duration;
 
@@ -13,7 +14,10 @@ import java.time.Duration;
 @Testcontainers(disabledWithoutDocker = true)
 class OracleStorefrontIntegrationTest extends StorefrontStoreContract {
     @Container
-    static final OracleContainer ORACLE = new OracleContainer("gvenzl/oracle-free:23.26.2-slim-faststart")
+    // GHCR is reachable in environments where Docker Hub is intercepted, and publishes native ARM64 images.
+    static final OracleContainer ORACLE = new OracleContainer(
+            DockerImageName.parse("ghcr.io/gvenzl/oracle-free:23.26.2-slim")
+                    .asCompatibleSubstituteFor("gvenzl/oracle-free"))
             .withStartupTimeout(Duration.ofMinutes(5));
 
     @DynamicPropertySource

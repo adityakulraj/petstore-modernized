@@ -16,6 +16,9 @@ app:
     password: ${DEMO_PASSWORD:petstore-demo}
     additional-username: ${DEMO_ADDITIONAL_USERNAME:aditya}
     additional-password: ${DEMO_ADDITIONAL_PASSWORD:password}
+  admin:
+    username: ${ADMIN_USERNAME:admin}
+    password: ${ADMIN_PASSWORD:admin}
 
 server:
   shutdown: graceful
@@ -35,7 +38,16 @@ management:
         include: health,info,metrics
 
 logging:
-  pattern:
-    level: "%5p [correlationId:%X{correlationId:-none}]"
+  file:
+    name: ${LOG_FILE:logs/petstore.log}
+  logback:
+    rollingpolicy:
+      max-file-size: ${LOG_MAX_FILE_SIZE:10MB}
+      max-history: ${LOG_MAX_HISTORY:7}
+  structured:
+    format:
+      # Logstash JSON includes MDC requestId/correlationId and SLF4J event key/value pairs.
+      console: ${CONSOLE_LOG_STRUCTURED_FORMAT:logstash}
+      file: logstash
   level:
     org.springframework.security: INFO
