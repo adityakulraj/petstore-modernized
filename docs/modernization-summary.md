@@ -165,31 +165,4 @@ outcomes.
 | Better security posture | Spring Security, CSRF, roles, CSP/headers, and restricted admin diagnostics. |
 | Stronger release confidence | Unit, integration, browser, and API tests run in CI for both data stores. |
 
-## What is deliberately not yet production-ready
 
-This is a modernization foundation and local demonstration environment, not a
-complete production platform. Before production, add:
-
-- enterprise OIDC/SSO and centrally managed secrets;
-- TLS, audited authorization, rate limiting, and secure credential rotation;
-- Flyway/Liquibase migrations for Oracle and controlled MongoDB index/data
-  migrations;
-- backups, restore drills, disaster-recovery objectives, and capacity testing;
-- exported metrics/traces/logs (for example OpenTelemetry plus the organization’s
-  metrics platform) instead of process-local telemetry only; and
-- a managed database service or production-grade database operations model.
-
-## Recommended next milestone
-
-Keep this modular monolith as the application boundary. Export its existing
-request and database signals to centralized observability, replace demo identity
-with OIDC, introduce controlled schema migrations, and use the Oracle/Mongo E2E
-contract suite as the acceptance gate for any future database cutover.
-
-## Legacy capabilities still to modernize
-
-The original admin EAR, OPC order-processing EAR, supplier EAR, JMS/MDB flows,
-and mail delivery should each be a separate workstream. Before migrating them,
-capture message contracts, delivery semantics, compensation behaviour, and
-operational ownership; then introduce durable messaging/outbox patterns only
-where independently deployable services justify their additional complexity.
