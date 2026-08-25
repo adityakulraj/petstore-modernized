@@ -14,6 +14,8 @@ app:
   demo:
     username: ${DEMO_USERNAME:alice}
     password: ${DEMO_PASSWORD:petstore-demo}
+    additional-username: ${DEMO_ADDITIONAL_USERNAME:aditya}
+    additional-password: ${DEMO_ADDITIONAL_PASSWORD:password}
 
 server:
   shutdown: graceful

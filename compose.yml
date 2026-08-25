@@ -6,6 +6,8 @@ x-app-common: &app-common
   environment:
     DEMO_USERNAME: ${DEMO_USERNAME:-alice}
     DEMO_PASSWORD: ${DEMO_PASSWORD:-petstore-demo}
+    DEMO_ADDITIONAL_USERNAME: ${DEMO_ADDITIONAL_USERNAME:-aditya}
+    DEMO_ADDITIONAL_PASSWORD: ${DEMO_ADDITIONAL_PASSWORD:-password}
   healthcheck:
     test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/actuator/health/readiness"]
     interval: 10s
@@ -57,6 +59,8 @@ services:
       ORACLE_PASSWORD: ${ORACLE_PASSWORD:-petstore_local_only}
       DEMO_USERNAME: ${DEMO_USERNAME:-alice}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-petstore-demo}
+      DEMO_ADDITIONAL_USERNAME: ${DEMO_ADDITIONAL_USERNAME:-aditya}
+      DEMO_ADDITIONAL_PASSWORD: ${DEMO_ADDITIONAL_PASSWORD:-password}
     ports:
       - "8080:8080"
     depends_on:
@@ -71,6 +75,8 @@ services:
       MONGODB_URI: mongodb://mongo:27017/petstore?replicaSet=rs0
       DEMO_USERNAME: ${DEMO_USERNAME:-alice}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-petstore-demo}
+      DEMO_ADDITIONAL_USERNAME: ${DEMO_ADDITIONAL_USERNAME:-aditya}
+      DEMO_ADDITIONAL_PASSWORD: ${DEMO_ADDITIONAL_PASSWORD:-password}
     ports:
       - "8080:8080"
     depends_on:

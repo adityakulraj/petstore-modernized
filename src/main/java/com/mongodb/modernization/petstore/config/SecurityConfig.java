@@ -21,10 +21,15 @@ public class SecurityConfig {
     @Bean
     UserDetailsService users(AppProperties properties, PasswordEncoder encoder) {
         var demo = properties.demo();
-        return new InMemoryUserDetailsManager(User.withUsername(demo.username())
+        var primary = User.withUsername(demo.username())
                 .password(encoder.encode(demo.password()))
                 .roles("CUSTOMER")
-                .build());
+                .build();
+        var additional = User.withUsername(demo.additionalUsername())
+                .password(encoder.encode(demo.additionalPassword()))
+                .roles("CUSTOMER")
+                .build();
+        return new InMemoryUserDetailsManager(primary, additional);
     }
 
     @Bean

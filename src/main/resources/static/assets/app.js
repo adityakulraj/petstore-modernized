@@ -29,7 +29,10 @@ async function api(path, options = {}) {
 async function loadCatalog() {
   state.products = await api('/api/v1/catalog/products');
   const categories = [...new Map(state.products.map(p => [p.categoryId, p.categoryName])).entries()];
-  document.querySelector('#category').insertAdjacentHTML('beforeend', categories.map(([id,name]) => `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`).join(''));
+  const categorySelect = document.querySelector('#category');
+  const selectedCategory = categorySelect.value;
+  categorySelect.innerHTML = '<option value="">All categories</option>' + categories.map(([id,name]) => `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`).join('');
+  if (categories.some(([id]) => id === selectedCategory)) categorySelect.value = selectedCategory;
   renderProducts();
 }
 async function loadSession() {
@@ -94,7 +97,7 @@ async function checkout(event) {
   const submit = event.currentTarget.querySelector('[type=submit]'); submit.disabled = true;
   try {
     const order = await api('/api/v1/orders', { method:'POST', headers:{'Idempotency-Key':idempotencyKey}, body:JSON.stringify({ expectedCartVersion:state.cart.version, address }) });
-    document.querySelector('#checkout-dialog').close(); toast(`Order ${order.id.slice(0,8)} placed.`); await Promise.all([loadCart(), loadOrders()]); show('orders');
+    document.querySelector('#checkout-dialog').close(); toast(`Order ${order.id.slice(0,8)} placed.`); await Promise.all([loadCatalog(), loadCart(), loadOrders()]); show('orders');
   } catch (error) { await recoverCart(error); } finally { submit.disabled = false; }
 }
 async function loadOrders() {

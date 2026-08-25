@@ -25,7 +25,7 @@ Oracle mode:
 docker compose --profile oracle up --build
 ```
 
-Open [http://localhost:8080](http://localhost:8080). The local demo login is `alice` / `petstore-demo`. Override it with `DEMO_USERNAME` and `DEMO_PASSWORD`.
+Open [http://localhost:8080](http://localhost:8080). The local demo logins are `alice` / `petstore-demo` and `aditya` / `password`. Override them with the corresponding demo environment variables below.
 
 Stop the selected stack without deleting its database volume:
 
@@ -82,6 +82,8 @@ curl http://localhost:8080/actuator/health/readiness
 | `MONGODB_URI` | `mongodb://localhost:27017/petstore?replicaSet=rs0` | MongoDB target; checkout requires a replica set. |
 | `DEMO_USERNAME` | `alice` | Local form-login user. |
 | `DEMO_PASSWORD` | `petstore-demo` | Local form-login password; override outside a demo. |
+| `DEMO_ADDITIONAL_USERNAME` | `aditya` | Additional local form-login user. |
+| `DEMO_ADDITIONAL_PASSWORD` | `password` | Additional local form-login password; override outside a demo. |
 | `JPA_DDL_AUTO` | `update` | Local Oracle schema mode; use controlled migrations in production. |
 
 ## Troubleshooting
