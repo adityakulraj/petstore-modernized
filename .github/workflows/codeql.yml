@@ -8,6 +8,7 @@ on:
     - cron: "23 4 * * 1"
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -42,6 +43,7 @@ jobs:
           # This is a private personal repository without GitHub Code Security licensing.
           # Run the analysis locally and retain SARIF instead of failing on the unavailable upload API.
           upload: never
+          upload-database: false
           output: codeql-results
       - uses: actions/upload-artifact@v4
         with:
