@@ -64,3 +64,21 @@ jobs:
         with:
           name: playwright-report-oracle
           path: playwright-report/
+
+  container-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start the MongoDB application image
+        run: docker compose --project-name petstore-smoke --profile mongo up --build -d --wait --wait-timeout 180
+      - name: Verify public readiness and secured operations health
+        run: |
+          curl --fail --retry 12 --retry-delay 2 http://localhost:8080/actuator/health/readiness
+          curl --fail --retry 6 --retry-delay 2 --user admin:admin http://localhost:8080/api/v1/admin/health
+      - name: Collect service logs
+        if: failure()
+        run: docker compose --project-name petstore-smoke --profile mongo logs --no-color
+      - name: Remove smoke-test resources
+        if: always()
+        run: docker compose --project-name petstore-smoke --profile mongo down --volumes --remove-orphans
