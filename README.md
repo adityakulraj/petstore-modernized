@@ -150,6 +150,8 @@ Oracle normally needs about 2 GB by itself. On a 6 GB Docker VM, stop another lo
 
 Java integration tests use Testcontainers and are automatically skipped when Docker is unavailable. CI runs the unit/integration tests and both full E2E implementations independently.
 
+If your network blocks Testcontainers from downloading its optional Ryuk cleanup image, run `TESTCONTAINERS_RYUK_DISABLED=true ./mvnw verify`. JUnit still stops its containers normally; use this local fallback only when the standard command reports the database contracts as skipped.
+
 Health probes:
 
 ```bash
