@@ -101,8 +101,6 @@ curl http://localhost:8080/actuator/health/readiness
 - Order lines and shipping address are purchase-time snapshots, so later catalog/profile changes do not rewrite history.
 - The UI calculates nothing authoritative: quantities are validated and totals are recomputed from server-held prices.
 
-See [ADR-001](docs/adr/001-dual-store-hexagonal-persistence.md) and [ADR-002](docs/adr/002-checkout-consistency.md) for trade-offs.
-
 ## Navigation for the panel
 
 | Concern | Location |
@@ -117,14 +115,6 @@ See [ADR-001](docs/adr/001-dual-store-hexagonal-persistence.md) and [ADR-002](do
 | Security | `config/SecurityConfig.java` |
 | UI | `src/main/resources/static/` |
 | Tests | `src/test/` and `e2e/` |
-
-## Documentation
-
-- [Modernization approach](docs/modernization-approach-prd.md)
-- [Implementation PRD](docs/implementation-prd.md)
-- [Test/parity strategy](docs/test-strategy-and-parity-report.md)
-- [AI-assisted delivery playbook](docs/ai-assisted-delivery-playbook.md)
-- [Panel one-pager](docs/panel-one-pager.md)
 
 ## Production hardening still required
 
