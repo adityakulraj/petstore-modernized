@@ -13,6 +13,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 
 import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "PS_CART")
@@ -22,7 +23,7 @@ class CartJpaEntity {
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "PS_CART_LINE", joinColumns = @JoinColumn(name = "CUSTOMER_ID"))
     @OrderColumn(name = "LINE_NUMBER")
-    ArrayList<CartLineJpa> lines = new ArrayList<>();
+    List<CartLineJpa> lines = new ArrayList<>();
 
     protected CartJpaEntity() {}
     CartJpaEntity(String customerId) { this.customerId = customerId; }

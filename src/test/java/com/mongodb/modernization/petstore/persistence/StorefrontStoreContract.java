@@ -15,6 +15,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -81,25 +82,28 @@ public abstract class StorefrontStoreContract {
         var cartB = store.addToCart(customerB, store.cart(customerB).version(), "K9-BD-01", 4);
         var gate = new CountDownLatch(1);
         var placed = new AtomicInteger(); var soldOut = new AtomicInteger();
+        var unexpected = new AtomicReference<Throwable>();
         var executor = Executors.newFixedThreadPool(2);
         try {
-            executor.submit(() -> checkoutOutcome(customerA, cartA.version(), gate, placed, soldOut));
-            executor.submit(() -> checkoutOutcome(customerB, cartB.version(), gate, placed, soldOut));
+            executor.submit(() -> checkoutOutcome(customerA, cartA.version(), gate, placed, soldOut, unexpected));
+            executor.submit(() -> checkoutOutcome(customerB, cartB.version(), gate, placed, soldOut, unexpected));
             gate.countDown(); executor.shutdown();
             assertThat(executor.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
         } finally {
             executor.shutdownNow();
         }
+        assertThat(unexpected.get()).isNull();
         assertThat(placed).hasValue(1);
         assertThat(soldOut).hasValue(1);
         assertThat(store.product("K9-BD-01").orElseThrow().stock()).isZero();
     }
 
     private void checkoutOutcome(String customer, long version, CountDownLatch gate,
-                                 AtomicInteger placed, AtomicInteger soldOut) {
+                                 AtomicInteger placed, AtomicInteger soldOut, AtomicReference<Throwable> unexpected) {
         await(gate);
         try { store.checkout(customer, version, UUID.randomUUID().toString(), ADDRESS); placed.incrementAndGet(); }
         catch (InsufficientStockException expected) { soldOut.incrementAndGet(); }
+        catch (Throwable failure) { unexpected.compareAndSet(null, failure); }
     }
     private static void await(CountDownLatch gate) {
         try { gate.await(); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new RuntimeException(interrupted); }

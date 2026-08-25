@@ -17,6 +17,7 @@ import jakarta.persistence.UniqueConstraint;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "PS_ORDER",
@@ -32,7 +33,7 @@ class OrderJpaEntity {
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "PS_ORDER_LINE", joinColumns = @JoinColumn(name = "ORDER_ID"))
     @OrderColumn(name = "LINE_NUMBER")
-    ArrayList<OrderLineJpa> lines = new ArrayList<>();
+    List<OrderLineJpa> lines = new ArrayList<>();
     @Column(nullable = false, precision = 12, scale = 2) BigDecimal total;
 
     protected OrderJpaEntity() {}

@@ -1,5 +1,6 @@
 package com.mongodb.modernization.petstore.persistence.mongo;
 
+import com.mongodb.MongoException;
 import com.mongodb.modernization.petstore.cart.domain.Cart;
 import com.mongodb.modernization.petstore.catalog.domain.Product;
 import com.mongodb.modernization.petstore.catalog.application.SeedProducts;
@@ -10,6 +11,7 @@ import com.mongodb.modernization.petstore.shared.application.NotFoundException;
 import com.mongodb.modernization.petstore.shared.application.StoreConflictException;
 import com.mongodb.modernization.petstore.shared.application.StorefrontStore;
 import com.mongodb.modernization.petstore.shared.domain.Address;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Profile;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -18,7 +20,9 @@ import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -26,20 +30,27 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.UnaryOperator;
 
 @Repository
 @Profile("mongo")
 class MongoStorefrontStore implements StorefrontStore {
+    private static final int MAX_TRANSACTION_ATTEMPTS = 5;
     private final MongoProductRepository products;
     private final MongoCartRepository carts;
     private final MongoOrderRepository orders;
     private final MongoTemplate template;
+    private final TransactionTemplate transactions;
     private final Clock clock = Clock.systemUTC();
 
     MongoStorefrontStore(MongoProductRepository products, MongoCartRepository carts,
-                         MongoOrderRepository orders, MongoTemplate template) {
+                         MongoOrderRepository orders, MongoTemplate template,
+                         @Qualifier("mongoTransactionManager") PlatformTransactionManager transactionManager) {
         this.products = products; this.carts = carts; this.orders = orders; this.template = template;
+        this.transactions = new TransactionTemplate(transactionManager);
     }
 
     @Override public List<Product> products() {
@@ -83,8 +94,19 @@ class MongoStorefrontStore implements StorefrontStore {
         }
     }
 
-    @Override @Transactional("mongoTransactionManager")
+    @Override
     public Order checkout(String customerId, long expectedCartVersion, String key, Address address) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return transactions.execute(status -> checkoutOnce(customerId, expectedCartVersion, key, address));
+            } catch (RuntimeException failure) {
+                if (attempt == MAX_TRANSACTION_ATTEMPTS || !isRetryableTransactionError(failure)) throw failure;
+                backoff(attempt);
+            }
+        }
+    }
+
+    private Order checkoutOnce(String customerId, long expectedCartVersion, String key, Address address) {
         var existing = orders.findByCustomerIdAndIdempotencyKey(customerId, key);
         if (existing.isPresent()) return existing.get().toDomain();
         var cartDocument = carts.findById(customerId).orElseThrow(() -> new StoreConflictException("Cart is empty"));
@@ -106,6 +128,25 @@ class MongoStorefrontStore implements StorefrontStore {
             throw new DuplicateCheckoutException(duplicate);
         } catch (OptimisticLockingFailureException conflict) {
             throw new StoreConflictException("The cart changed during checkout; refresh and retry", conflict);
+        }
+    }
+
+    private static boolean isRetryableTransactionError(Throwable failure) {
+        for (var cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof MongoException mongo &&
+                    (mongo.hasErrorLabel(MongoException.TRANSIENT_TRANSACTION_ERROR_LABEL)
+                            || mongo.hasErrorLabel(MongoException.UNKNOWN_TRANSACTION_COMMIT_RESULT_LABEL))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void backoff(int attempt) {
+        long milliseconds = ThreadLocalRandom.current().nextLong(5, 16) * attempt;
+        LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(milliseconds));
+        if (Thread.currentThread().isInterrupted()) {
+            throw new StoreConflictException("Checkout retry interrupted");
         }
     }
 
