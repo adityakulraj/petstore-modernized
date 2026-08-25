@@ -21,7 +21,7 @@ jobs:
           cache: maven
       - name: Verify unit and dual-store integration contracts
         run: ./mvnw -B -ntp verify
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: java-test-reports
@@ -40,7 +40,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Run MongoDB API and browser E2E contracts
         run: npm run e2e:mongo
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: playwright-report-mongo
@@ -59,7 +59,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Run Oracle API and browser E2E contracts
         run: npm run e2e:oracle
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: playwright-report-oracle
