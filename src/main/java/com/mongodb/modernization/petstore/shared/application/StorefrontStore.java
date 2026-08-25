@@ -9,7 +9,8 @@ import java.util.List;
 import java.util.Optional;
 
 public interface StorefrontStore {
-    List<Product> products();
+    default List<Product> products() { return products(null); }
+    List<Product> products(String categoryId);
     Optional<Product> product(String productId);
     Cart cart(String customerId);
     Cart addToCart(String customerId, long expectedVersion, String productId, int quantity);

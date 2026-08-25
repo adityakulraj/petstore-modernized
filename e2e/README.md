@@ -7,9 +7,9 @@ This is the source-of-truth inventory for the automated test suite. The same Pla
 | Layer | MongoDB | Oracle | Command |
 |---|---:|---:|---|
 | Java unit + persistence integration | Yes | Yes | `./mvnw verify` |
-| API E2E only | 17 tests | 17 tests | `npm run e2e:api:mongo`, `npm run e2e:api:oracle` |
-| API + real-browser E2E | 20 tests | 20 tests | `npm run e2e:mongo`, `npm run e2e:oracle` |
-| Both API implementations | 34 executions | — | `npm run e2e:api:all` |
+| API E2E only | 18 tests | 18 tests | `npm run e2e:api:mongo`, `npm run e2e:api:oracle` |
+| API + real-browser E2E | 22 tests | 22 tests | `npm run e2e:mongo`, `npm run e2e:oracle` |
+| Both API implementations | 36 executions | — | `npm run e2e:api:all` |
 
 Install prerequisites once:
 
@@ -26,16 +26,16 @@ npm run e2e:mongo
 npm run e2e:oracle
 ```
 
-`./mvnw verify` currently executes 14 JUnit tests: six unit/service tests plus the four-test persistence contract against each database. The two full Playwright runs execute 40 tests. Together, the matrix is 54 test executions across 30 unique specifications.
+`./mvnw verify` currently executes 20 JUnit tests: twelve unit/service/telemetry tests plus the four-test persistence contract against each database. The two full Playwright runs execute 44 tests. Together, the matrix is 64 test executions across 38 unique specifications.
 
 Latest local verification (August 26, 2026):
 
 | Command | Result |
 |---|---:|
-| `./mvnw verify` | 14 passed, 0 failed, 0 skipped |
-| `npm run e2e:mongo` | 20 passed, 0 failed |
-| `npm run e2e:oracle` | 20 passed, 0 failed |
-| Live admin log search on ports 8080 and 8081 | HTTP 200 on both |
+| `./mvnw verify` | 20 passed, 0 failed, 0 skipped |
+| `npm run e2e:mongo` | 22 passed, 0 failed |
+| `npm run e2e:oracle` | 22 passed, 0 failed |
+| Live admin health and log endpoints on ports 8080 and 8081 | HTTP 200 on both |
 
 ## Isolation and inventory guarantee
 
@@ -72,22 +72,23 @@ Every row below runs against both MongoDB and Oracle. The link points to the exe
 | 1 | [Public session, catalog, categories, filters, and product lookup](./api-contract.spec.js#L73) | Anonymous session reports unauthenticated and the selected store; catalog returns seven products in stable order with seed stock/version; categories return all five values; category filter is case-insensitive; query is trimmed and case-insensitive; blank filters return all products; known product returns its snapshot; unknown product returns 404 Problem Details. |
 | 2 | [Safe correlation/request IDs](./api-contract.spec.js#L109) | A valid legacy `X-Correlation-ID` is echoed in both response headers; `X-Request-ID` takes precedence when both are supplied; a value longer than 64 characters is rejected and replaced with a UUID. |
 | 3 | [Admin structured-log search](./api-contract.spec.js#L126) | A request is logged with the supplied request ID; anonymous access is rejected; a customer receives 403; admin form login succeeds; `admin/admin` Basic auth succeeds; search returns the matching HTTP event and fields; an unsafe request-ID filter receives 400. |
-| 4 | [Authentication and CSRF enforcement](./api-contract.spec.js#L173) | Anonymous cart, order-history, and CSRF reads receive 401 with a Basic challenge; anonymous mutation receives 403; authenticated mutation with missing or invalid CSRF receives 403; rejected mutations leave the cart empty. |
-| 5 | [Invalid login, both customers, and logout](./api-contract.spec.js#L202) | Wrong password redirects to `login?error` and leaves the session anonymous; `alice/petstore-demo` authenticates; `aditya/password` authenticates; the session reports the correct username/store; CSRF-protected logout returns 204 and invalidates the session. |
-| 6 | [Customer cart isolation](./api-contract.spec.js#L235) | Alice adds two Canary items; Aditya's cart remains empty. |
-| 7 | [Cart CRUD, totals, snapshots, and versions](./api-contract.spec.js#L250) | New cart is empty at version 0; add returns version 1 and exact price/total; update returns version 2 and recomputed total; delete returns version 3, zero total, and no lines. |
-| 8 | [Cart input validation](./api-contract.spec.js#L282) | Unknown product returns 404; blank product, quantity 0, quantity 100, negative expected version, and unknown JSON field return 400; malformed JSON returns 400; no rejected request mutates the cart. |
-| 9 | [Missing cart lines and stale versions](./api-contract.spec.js#L308) | Updating or deleting a missing line returns 404; delete without `expectedVersion` returns 400; a valid update succeeds; reusing its stale version returns 409 with an explanatory detail. |
-| 10 | [Simultaneous cart-update race](./api-contract.spec.js#L342) | Two sessions for Alice update from the same version concurrently; exactly one receives 200 and one 409; the winning quantity is retained and the cart version increments exactly once. |
-| 11 | [Checkout validation](./api-contract.spec.js#L363) | Missing, blank, or over-100-character idempotency keys return 400; invalid nested address returns field-level Problem Details; unknown JSON field returns 400; checkout of an empty cart returns 409. |
-| 12 | [Successful, atomic, idempotent checkout](./api-contract.spec.js#L390) | Checkout returns 201 with immutable product/address/price snapshots and exact total; retrying the key returns the same order ID; only one history row exists; cart is cleared; stock decrements once and inventory version increments once. |
-| 13 | [Stale-cart checkout](./api-contract.spec.js#L420) | Checkout with an old cart version returns 409; product stock/version is unchanged; no order is created. |
-| 14 | [Insufficient-stock rollback](./api-contract.spec.js#L438) | A multi-line cart has one available and one over-quantity item; checkout returns 409; the earlier candidate decrement is rolled back; both product versions remain zero; cart is preserved; no order exists. |
-| 15 | [Two-customer last-inventory race](./api-contract.spec.js#L456) | Alice and Aditya each request all four Bulldogs and checkout concurrently; exactly one receives 201 and one 409; stock ends at zero, never negative; exactly one order exists; winner's cart clears while loser's cart remains. |
-| 16 | [Concurrent same-key idempotency race](./api-contract.spec.js#L480) | Two sessions checkout the same cart with one key concurrently; both receive 201 with the same order ID; only one order is stored; stock and inventory version change exactly once. |
-| 17 | [Customer-scoped idempotency and history](./api-contract.spec.js#L501) | Alice and Aditya reuse the same idempotency key; distinct orders are created because uniqueness includes customer ID; each user sees only their own order; stock decrements twice. |
+| 4 | [Admin health, pool, telemetry, and query plans](./api-contract.spec.js#L174) | Anonymous access is rejected and customer receives 403; admin receives UP/store/uptime, exactly 60 traffic buckets, JVM data, pool range/utilization, observed query timings, and cached explain plans; a known 404 is reflected in client-error telemetry. |
+| 5 | [Authentication and CSRF enforcement](./api-contract.spec.js#L219) | Anonymous cart, order-history, and CSRF reads receive 401 with a Basic challenge; anonymous mutation receives 403; authenticated mutation with missing or invalid CSRF receives 403; rejected mutations leave the cart empty. |
+| 6 | [Invalid login, both customers, and logout](./api-contract.spec.js#L248) | Wrong password redirects to `login?error` and leaves the session anonymous; `alice/petstore-demo` authenticates; `aditya/password` authenticates; the session reports the correct username/store; CSRF-protected logout returns 204 and invalidates the session. |
+| 7 | [Customer cart isolation](./api-contract.spec.js#L282) | Alice adds two Canary items; Aditya's cart remains empty. |
+| 8 | [Cart CRUD, totals, snapshots, and versions](./api-contract.spec.js#L297) | New cart is empty at version 0; add returns version 1 and exact price/total; update returns version 2 and recomputed total; delete returns version 3, zero total, and no lines. |
+| 9 | [Cart input validation](./api-contract.spec.js#L329) | Unknown product returns 404; blank product, quantity 0, quantity 100, negative expected version, and unknown JSON field return 400; malformed JSON returns 400; no rejected request mutates the cart. |
+| 10 | [Missing cart lines and stale versions](./api-contract.spec.js#L355) | Updating or deleting a missing line returns 404; delete without `expectedVersion` returns 400; a valid update succeeds; reusing its stale version returns 409 with an explanatory detail. |
+| 11 | [Simultaneous cart-update race](./api-contract.spec.js#L389) | Two sessions for Alice update from the same version concurrently; exactly one receives 200 and one 409; the winning quantity is retained and the cart version increments exactly once. |
+| 12 | [Checkout validation](./api-contract.spec.js#L410) | Missing, blank, or over-100-character idempotency keys return 400; invalid nested address returns field-level Problem Details; unknown JSON field returns 400; checkout of an empty cart returns 409. |
+| 13 | [Successful, atomic, idempotent checkout](./api-contract.spec.js#L437) | Checkout returns 201 with immutable product/address/price snapshots and exact total; retrying the key returns the same order ID; only one history row exists; cart is cleared; stock decrements once and inventory version increments once. |
+| 14 | [Stale-cart checkout](./api-contract.spec.js#L467) | Checkout with an old cart version returns 409; product stock/version is unchanged; no order is created. |
+| 15 | [Insufficient-stock rollback](./api-contract.spec.js#L485) | A multi-line cart has one available and one over-quantity item; checkout returns 409; the earlier candidate decrement is rolled back; both product versions remain zero; cart is preserved; no order exists. |
+| 16 | [Two-customer last-inventory race](./api-contract.spec.js#L503) | Alice and Aditya each request all four Bulldogs and checkout concurrently; exactly one receives 201 and one 409; stock ends at zero, never negative; exactly one order exists; winner's cart clears while loser's cart remains. |
+| 17 | [Concurrent same-key idempotency race](./api-contract.spec.js#L527) | Two sessions checkout the same cart with one key concurrently; both receive 201 with the same order ID; only one order is stored; stock and inventory version change exactly once. |
+| 18 | [Customer-scoped idempotency and history](./api-contract.spec.js#L548) | Alice and Aditya reuse the same idempotency key; distinct orders are created because uniqueness includes customer ID; each user sees only their own order; stock decrements twice. |
 
-All HTTP endpoints are exercised: `GET /api/v1/session`, `GET /api/v1/csrf`, all three catalog routes, `GET /api/v1/cart`, all three cart mutation routes, `GET/POST /api/v1/orders`, `GET /api/v1/admin/logs`, `/login`, and `/logout`.
+All HTTP endpoints are exercised: `GET /api/v1/session`, `GET /api/v1/csrf`, all three catalog routes, `GET /api/v1/cart`, all three cart mutation routes, `GET/POST /api/v1/orders`, both `GET /api/v1/admin/logs` and `GET /api/v1/admin/health`, `/admin/health.html`, `/login`, and `/logout`.
 
 Run one API scenario against one store, for example:
 
@@ -106,6 +107,7 @@ These tests use a real Chromium instance and the same before/after inventory fix
 | 1 | [Complete customer purchase journey](./petstore.spec.js#L3) | Landing page and seven cards render; stock is visible; Alice signs in through the form; adds an item; opens cart; opens checkout dialog; places the order once; order confirmation/history appears; visible inventory changes from 10 to 9. |
 | 2 | [Catalog search](./petstore.spec.js#L28) | Searching `iguana` filters seven cards to one Green Iguana without a server-side state mutation. |
 | 3 | [Additional customer login](./petstore.spec.js#L35) | Aditya signs in with the configured second demo account and the UI displays the correct identity. |
+| 4 | [Admin health dashboard](./petstore.spec.js#L44) | Anonymous navigation reaches login; `admin/admin` returns to the saved dashboard; UP status, five summary cards, three SVG graphs, live pool/query telemetry, optimizer plans, and the logs link render in real Chromium. |
 
 ## Java unit and service coverage
 
@@ -117,6 +119,12 @@ These tests use a real Chromium instance and the same before/after inventory fix
 | [Cart requires an existing line](../src/test/java/com/mongodb/modernization/petstore/cart/domain/CartTest.java#L37) | Update and remove of a missing product both throw the domain not-found exception. |
 | [Service short-circuits idempotent retries](../src/test/java/com/mongodb/modernization/petstore/shared/application/StorefrontServiceTest.java#L18) | An existing order is returned without invoking checkout again. |
 | [Security creates encoded, role-separated users](../src/test/java/com/mongodb/modernization/petstore/config/SecurityConfigTest.java#L10) | Both customer passwords and admin password match their BCrypt hashes; Aditya has only `CUSTOMER`; admin has only `ADMIN`. |
+| [HTTP telemetry classification and self-exclusion](../src/test/java/com/mongodb/modernization/petstore/observability/RequestTelemetryTest.java#L18) | 2xx/4xx/5xx counts, rates, average/max latency, and 60 buckets are exact; dashboard polls and Actuator probes do not inflate their own graphs. |
+| [HTTP telemetry rolling expiry](../src/test/java/com/mongodb/modernization/petstore/observability/RequestTelemetryTest.java#L41) | The oldest bucket expires at 60 minutes while lifetime counts remain. |
+| [Concurrent HTTP telemetry](../src/test/java/com/mongodb/modernization/petstore/observability/RequestTelemetryTest.java#L56) | Eight threads record 16,000 requests without lost updates. |
+| [Transient retry and telemetry](../src/test/java/com/mongodb/modernization/petstore/observability/DatabaseExecutorTest.java#L16) | A transient safe operation succeeds on attempt three and reports exactly two retries. |
+| [Unsafe and deterministic failures are not retried](../src/test/java/com/mongodb/modernization/petstore/observability/DatabaseExecutorTest.java#L39) | An ambiguous cart write and a duplicate constraint each execute once and are counted as failures. |
+| [Capped exponential equal jitter](../src/test/java/com/mongodb/modernization/petstore/observability/DatabaseExecutorTest.java#L59) | Every sampled delay remains between half the exponential ceiling and the ceiling, capped at 200 ms. |
 
 ## Shared persistence contract
 
@@ -135,5 +143,6 @@ Each test below runs once through `MongoStorefrontStore` and once through `Oracl
 - Playwright retains a screenshot on failure and a trace on the first retry.
 - CI uploads separate `playwright-report-mongo`, `playwright-report-oracle`, and `java-test-reports` artifacts.
 - Send a known `X-Request-ID` and query `GET /api/v1/admin/logs?requestId=...` with `admin/admin` when diagnosing an HTTP failure.
+- Open `/admin/health.html` with `admin/admin` to correlate HTTP errors, pool pressure, retries, operation latency, and optimizer scan choices.
 
 The E2E suites use one worker because the reset fixture owns one disposable database. Concurrency is created deliberately inside the race tests with simultaneous requests/threads, so serial test scheduling does not reduce race-condition coverage.

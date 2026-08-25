@@ -21,6 +21,7 @@ public class StorefrontService implements ApplicationRunner {
     public StorefrontService(StorefrontStore store) { this.store = store; }
 
     public List<Product> products() { return store.products(); }
+    public List<Product> products(String categoryId) { return store.products(categoryId); }
     public Product product(String id) { return store.product(id).orElseThrow(() -> new NotFoundException("Unknown product " + id)); }
     public Cart cart(String customerId) { return store.cart(customerId); }
     public Cart add(String customerId, long version, String productId, int quantity) {

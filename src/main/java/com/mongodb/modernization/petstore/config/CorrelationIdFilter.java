@@ -1,5 +1,6 @@
 package com.mongodb.modernization.petstore.config;
 
+import com.mongodb.modernization.petstore.observability.RequestTelemetry;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -20,6 +21,9 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
     private static final String REQUEST_ID_HEADER = "X-Request-ID";
     private static final String CORRELATION_ID_HEADER = "X-Correlation-ID";
     private static final Pattern SAFE = Pattern.compile("[A-Za-z0-9._-]{1,64}");
+    private final RequestTelemetry telemetry;
+
+    public CorrelationIdFilter(RequestTelemetry telemetry) { this.telemetry = telemetry; }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -37,13 +41,15 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
             try {
                 chain.doFilter(request, response);
             } finally {
+                var durationNanos = System.nanoTime() - started;
+                telemetry.record(request.getRequestURI(), response.getStatus(), durationNanos);
                 // One completion event per request is the stable search anchor in the local JSON log.
                 var event = LOG.atInfo()
                         .addKeyValue("event", "http.request.completed")
                         .addKeyValue("httpMethod", request.getMethod())
                         .addKeyValue("path", request.getRequestURI())
                         .addKeyValue("status", response.getStatus())
-                        .addKeyValue("durationMs", (System.nanoTime() - started) / 1_000_000);
+                        .addKeyValue("durationMs", durationNanos / 1_000_000);
                 if (request.getUserPrincipal() != null) {
                     event = event.addKeyValue("principal", request.getUserPrincipal().getName());
                 }

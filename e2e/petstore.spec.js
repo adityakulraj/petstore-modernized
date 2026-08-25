@@ -40,3 +40,22 @@ test('additional demo customer can sign in', async ({ page }) => {
   await page.getByRole('button', { name: /sign in/i }).click();
   await expect(page.getByText(/Hi, aditya/)).toBeVisible();
 });
+
+test('admin can open the live health dashboard and inspect database diagnostics', async ({ page }) => {
+  await page.goto('/admin/health.html');
+  await expect(page).toHaveURL(/\/login$/);
+  await page.locator('input[name="username"]').fill(process.env.ADMIN_USERNAME || 'admin');
+  await page.locator('input[name="password"]').fill(process.env.ADMIN_PASSWORD || 'admin');
+  await page.getByRole('button', { name: /sign in/i }).click();
+
+  await expect(page).toHaveURL(/\/admin\/health\.html(?:\?continue)?$/);
+  await expect(page.getByRole('heading', { name: 'Application health' })).toBeVisible();
+  await expect(page.locator('#health-status')).toHaveText('UP');
+  await expect(page.locator('.metric-grid article')).toHaveCount(5);
+  await expect(page.locator('svg.chart')).toHaveCount(3);
+  await expect(page.getByRole('heading', { name: 'Database performance' })).toBeVisible();
+  await expect(page.locator('#pool-provider')).not.toHaveText('—');
+  await expect(page.locator('#operation-rows tr')).not.toHaveCount(0);
+  await expect(page.locator('#plan-rows')).toContainText('orders.by_idempotency');
+  await expect(page.getByRole('link', { name: 'Logs' })).toHaveAttribute('href', /\/api\/v1\/admin\/logs/);
+});

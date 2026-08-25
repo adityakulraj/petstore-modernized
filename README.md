@@ -31,7 +31,7 @@ Open [http://localhost:8080](http://localhost:8080). The local accounts are:
 |---|---|---|
 | Customer 1 | `alice` | `petstore-demo` |
 | Customer 2 | `aditya` | `password` |
-| Log viewer | `admin` | `admin` |
+| Operations dashboard and logs | `admin` | `admin` |
 
 These are demo-only defaults. Override every password outside local development.
 
@@ -87,6 +87,31 @@ If MongoDB and Oracle app processes are running simultaneously on ports 8080 and
 - MongoDB: `http://localhost:8080/api/v1/admin/logs`
 - Oracle: `http://localhost:8081/api/v1/admin/logs`
 
+## Health and database performance dashboard
+
+Sign in with `admin/admin` and open [http://localhost:8080/admin/health.html](http://localhost:8080/admin/health.html). When the host-run MongoDB and Oracle applications are both active, use:
+
+- MongoDB: [http://localhost:8080/admin/health.html](http://localhost:8080/admin/health.html)
+- Oracle: [http://localhost:8081/admin/health.html](http://localhost:8081/admin/health.html)
+
+The page refreshes every five seconds and shows application status, process uptime, requests/minute, rolling 4xx and 5xx rates, average/max HTTP latency, JVM heap/threads, connection-pool utilization, and per-store-operation calls/failures/retries/latency. It also shows read-only query-plan diagnostics: MongoDB `executionStats` including `COLLSCAN`, `IXSCAN`, documents and keys examined; Oracle optimizer scan type, index, estimated rows, and cost. Query plans are cached for 60 seconds so dashboard polling does not repeatedly run `explain` work.
+
+The JSON source is also admin-only:
+
+```bash
+curl -u admin:admin http://localhost:8080/api/v1/admin/health
+```
+
+HTTP and query telemetry is deliberately local and in memory: it resets on application restart and covers the current process, with a rolling 60-minute HTTP graph. Dashboard polls and Actuator probes are excluded from traffic calculations so they do not manufacture their own throughput. This is appropriate for the take-home's local diagnostics; production history should be exported to the organization's metrics platform.
+
+## Database pooling, retries, and indexes
+
+Both implementations use bounded connection pools. Oracle uses HikariCP; one MongoClient supplies the MongoDB Java driver's built-in pool. The defaults are 1 minimum and 10 maximum connections, a 10-second acquisition wait, and five-minute maximum idle time. Pool size and live active/idle/waiting counts are visible on the dashboard.
+
+Transient failures use a maximum of five attempts with capped exponential equal jitter (25 ms initial, 500 ms cap). The half-cap delay floor prevents a burst of immediate retries from exhausting the budget while a competing transaction is still committing. Retries are limited to reads and transactionally idempotent checkout. Cart mutations are observed but never blindly replayed after an ambiguous commit, because doing so could apply a non-idempotent quantity change twice. MongoDB driver `retryReads` and `retryWrites` also remain enabled.
+
+Indexes match the real query shapes in both stores: product category; customer + idempotency key (unique); customer + descending creation time; Oracle cart-line customer and order-line order joins; plus each store's primary-key indexes. The category API now pushes category filtering into the selected database so its index is actually used. The unconstrained seven-row catalog query intentionally remains a full scan; arbitrary substring search preserves legacy behavior and is filtered after that small result set rather than pretending a B-tree index can accelerate contains-anywhere matching.
+
 ## Run the isolated E2E suites
 
 Install the Node dependencies once:
@@ -141,6 +166,13 @@ curl http://localhost:8080/actuator/health/readiness
 | `ORACLE_USERNAME` | `petstore` | Oracle application user. |
 | `ORACLE_PASSWORD` | local-only value | Oracle application password. |
 | `MONGODB_URI` | `mongodb://localhost:27017/petstore?replicaSet=rs0&directConnection=true` | Host-run MongoDB target; the replica-set option enables transactions and direct connection avoids resolving the container-only member hostname. |
+| `DB_POOL_MIN_SIZE` | `1` | Minimum idle connections for MongoDB and Oracle pools. |
+| `DB_POOL_MAX_SIZE` | `10` | Maximum connections for MongoDB and Oracle pools. |
+| `DB_POOL_MAX_WAIT_MS` | `10000` | Maximum wait for a pooled connection. |
+| `DB_POOL_MAX_IDLE_MS` | `300000` | MongoDB connection idle limit; Oracle uses the same default. |
+| `DB_RETRY_MAX_ATTEMPTS` | `5` | Total attempts for a classified transient, retry-safe operation. |
+| `DB_RETRY_INITIAL_DELAY` | `25ms` | Initial exponential-backoff ceiling. |
+| `DB_RETRY_MAX_DELAY` | `500ms` | Maximum jittered retry delay. |
 | `DEMO_USERNAME` | `alice` | Local form-login user. |
 | `DEMO_PASSWORD` | `petstore-demo` | Local form-login password; override outside a demo. |
 | `DEMO_ADDITIONAL_USERNAME` | `aditya` | Additional local form-login user. |
@@ -161,6 +193,7 @@ curl http://localhost:8080/actuator/health/readiness
 - **Oracle E2E exits while another Oracle is running:** the Docker VM is usually out of memory. Pause the normal container with `docker compose stop oracle`, run the suite, then use `docker compose start oracle`; the volume is retained.
 - **Docker reports `x509: certificate signed by unknown authority`:** Docker's VM does not trust your network's certificate authority. Add the organization-approved root CA to Docker/Rancher Desktop and restart it; do not disable TLS verification.
 - **Reset demo data:** after confirming no needed local data remains, remove only this project's volumes with `docker compose --profile <oracle|mongo> down --volumes`, then start again.
+- **Dashboard asks for credentials:** use the operations account (`admin/admin` by default), not either customer account. Direct navigation returns to the dashboard after login.
 
 ## Concurrency and consistency contract
 
@@ -183,6 +216,10 @@ curl http://localhost:8080/actuator/health/readiness
 | MongoDB transactions | `persistence/mongo/MongoStorefrontStore.java` |
 | Database selection | `application.yml`, `application-oracle.yml`, `application-mongo.yml` |
 | Security | `config/SecurityConfig.java` |
+| HTTP/query telemetry and retry policy | `observability/` |
+| MongoDB pool and explain diagnostics | `persistence/mongo/MongoObservabilityConfig.java`, `MongoDatabaseDiagnostics.java` |
+| Oracle pool and explain diagnostics | `persistence/oracle/OracleDatabaseDiagnostics.java` |
+| Operations dashboard | `static/admin/health.html`, `static/assets/health.js` |
 | UI | `src/main/resources/static/` |
 | Tests | `src/test/` and `e2e/` |
 

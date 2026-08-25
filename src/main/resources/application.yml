@@ -19,6 +19,16 @@ app:
   admin:
     username: ${ADMIN_USERNAME:admin}
     password: ${ADMIN_PASSWORD:admin}
+  database:
+    pool:
+      min-size: ${DB_POOL_MIN_SIZE:1}
+      max-size: ${DB_POOL_MAX_SIZE:10}
+      max-wait: ${DB_POOL_MAX_WAIT_MS:10000}ms
+      max-idle: ${DB_POOL_MAX_IDLE_MS:300000}ms
+    retry:
+      max-attempts: ${DB_RETRY_MAX_ATTEMPTS:5}
+      initial-delay: ${DB_RETRY_INITIAL_DELAY:25ms}
+      max-delay: ${DB_RETRY_MAX_DELAY:500ms}
 
 server:
   shutdown: graceful

@@ -3,7 +3,8 @@ WORKDIR /workspace
 COPY pom.xml ./
 RUN --mount=type=cache,target=/root/.m2 mvn -B -ntp dependency:go-offline
 COPY src ./src
-RUN --mount=type=cache,target=/root/.m2 mvn -B -ntp verify
+# The image build cannot access the host Docker socket, so Testcontainers belongs in CI/`mvn verify`, not BuildKit.
+RUN --mount=type=cache,target=/root/.m2 mvn -B -ntp -DskipTests package
 
 FROM mirror.gcr.io/library/eclipse-temurin:21-jre
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*

@@ -37,8 +37,9 @@ async function loadCatalog() {
 }
 async function loadSession() {
   state.session = await api('/api/v1/session').catch(() => ({ authenticated: false }));
+  const operations = state.session.admin ? ' · <a class="login-link" href="/admin/health.html">Health</a>' : '';
   document.querySelector('#session-actions').innerHTML = state.session.authenticated
-    ? `<span>Hi, ${escapeHtml(state.session.username)}</span> · <button id="sign-out" class="login-link nav-link">Sign out</button>`
+    ? `<span>Hi, ${escapeHtml(state.session.username)}</span>${operations} · <button id="sign-out" class="login-link nav-link">Sign out</button>`
     : '<a class="login-link" href="/login">Sign in</a>';
   document.querySelector('#sign-out')?.addEventListener('click', signOut);
 }

@@ -18,9 +18,11 @@ public class SessionController {
 
     @GetMapping("/session")
     public Map<String, Object> session(Authentication authentication) {
+        var admin = authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(authority -> authority.getAuthority().equals("ROLE_ADMIN"));
         return Map.of("authenticated", authentication != null, "username",
                 authentication == null ? "" : authentication.getName(),
-                "store", properties.store().name().toLowerCase());
+                "store", properties.store().name().toLowerCase(), "admin", admin);
     }
 
     @GetMapping("/csrf")

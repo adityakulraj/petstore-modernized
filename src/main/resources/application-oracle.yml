@@ -12,9 +12,14 @@ spring:
     username: ${ORACLE_USERNAME:petstore}
     password: ${ORACLE_PASSWORD:petstore_local_only}
     hikari:
-      maximum-pool-size: 10
-      minimum-idle: 1
-      connection-timeout: 10000
+      pool-name: petstore-oracle
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+      minimum-idle: ${DB_POOL_MIN_SIZE:1}
+      connection-timeout: ${DB_POOL_MAX_WAIT_MS:10000}
+      idle-timeout: ${DB_POOL_MAX_IDLE_MS:300000}
+      validation-timeout: 5000
+      max-lifetime: 1800000
+      keepalive-time: 120000
   jpa:
     open-in-view: false
     hibernate:

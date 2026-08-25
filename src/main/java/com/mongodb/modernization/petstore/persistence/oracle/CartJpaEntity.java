@@ -7,6 +7,7 @@ import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OrderColumn;
 import jakarta.persistence.Table;
@@ -21,7 +22,8 @@ class CartJpaEntity {
     @Id @Column(name = "CUSTOMER_ID", length = 100) String customerId;
     @Version long version;
     @ElementCollection(fetch = FetchType.EAGER)
-    @CollectionTable(name = "PS_CART_LINE", joinColumns = @JoinColumn(name = "CUSTOMER_ID"))
+    @CollectionTable(name = "PS_CART_LINE", joinColumns = @JoinColumn(name = "CUSTOMER_ID"),
+            indexes = @Index(name = "IX_PS_CART_LINE_CUSTOMER", columnList = "CUSTOMER_ID"))
     @OrderColumn(name = "LINE_NUMBER")
     List<CartLineJpa> lines = new ArrayList<>();
 

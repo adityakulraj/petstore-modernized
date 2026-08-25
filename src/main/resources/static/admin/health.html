@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="PetStore local application health dashboard">
+    <title>PetStore Operations</title>
+    <link rel="stylesheet" href="/assets/health.css">
+</head>
+<body>
+<header class="ops-header">
+    <div>
+        <a class="brand" href="/"><span>Pet</span>Store</a>
+        <span class="slash">/</span><strong>Operations</strong>
+    </div>
+    <nav aria-label="Operations navigation">
+        <a href="/">Storefront</a>
+        <a href="/api/v1/admin/logs?limit=200">Logs</a>
+    </nav>
+</header>
+
+<main>
+    <section class="hero">
+        <div>
+            <p class="kicker">LOCAL RUNTIME TELEMETRY</p>
+            <h1>Application health</h1>
+            <p id="scope-note">Metrics are process-local and reset whenever this app restarts.</p>
+        </div>
+        <div class="status-block">
+            <div><span id="health-dot" class="status-dot pending"></span><strong id="health-status">Loading</strong></div>
+            <p><span id="store-name">—</span> store · updated <time id="updated-at">—</time></p>
+        </div>
+    </section>
+
+    <div id="dashboard-error" class="error-banner hidden" role="alert"></div>
+
+    <section class="metric-grid" aria-label="Application summary">
+        <article><p>Uptime</p><strong id="uptime">—</strong><small id="started-at">Started —</small></article>
+        <article><p>Throughput</p><strong id="throughput">—</strong><small>requests this minute</small></article>
+        <article><p>Server error rate</p><strong id="server-errors">—</strong><small id="server-error-count">5xx · last 60 minutes</small></article>
+        <article><p>Average latency</p><strong id="latency">—</strong><small id="max-latency">Maximum —</small></article>
+        <article><p>Heap usage</p><strong id="heap">—</strong><small id="threads">— threads</small></article>
+    </section>
+
+    <section class="chart-grid" aria-label="Traffic charts">
+        <article class="panel chart-panel">
+            <div class="panel-heading"><div><p class="kicker">LAST 60 MINUTES</p><h2>Throughput</h2></div><span>requests / minute</span></div>
+            <svg id="throughput-chart" class="chart" role="img" aria-label="Requests per minute"></svg>
+        </article>
+        <article class="panel chart-panel">
+            <div class="panel-heading"><div><p class="kicker">LAST 60 MINUTES</p><h2>Error rate</h2></div><span><i class="legend client"></i>4xx <i class="legend server"></i>5xx</span></div>
+            <svg id="error-chart" class="chart" role="img" aria-label="Client and server error rate per minute"></svg>
+        </article>
+        <article class="panel chart-panel wide">
+            <div class="panel-heading"><div><p class="kicker">LAST 60 MINUTES</p><h2>Response latency</h2></div><span>average milliseconds</span></div>
+            <svg id="latency-chart" class="chart" role="img" aria-label="Average response latency per minute"></svg>
+        </article>
+    </section>
+
+    <section class="database-section">
+        <div class="section-heading"><div><p class="kicker">DATA ACCESS</p><h2>Database performance</h2></div><p>Live operation timings and cached optimizer diagnostics.</p></div>
+        <div class="database-grid">
+            <article class="panel pool-panel">
+                <div class="panel-heading"><h3>Connection pool</h3><span id="pool-provider">—</span></div>
+                <div class="pool-visual" aria-label="Connection pool usage"><span id="pool-used"></span></div>
+                <dl>
+                    <div><dt>Active</dt><dd id="pool-active">—</dd></div>
+                    <div><dt>Idle</dt><dd id="pool-idle">—</dd></div>
+                    <div><dt>Total</dt><dd id="pool-total">—</dd></div>
+                    <div><dt>Configured range</dt><dd id="pool-range">—</dd></div>
+                    <div><dt>Waiting</dt><dd id="pool-waiting">—</dd></div>
+                    <div><dt>Acquire failures</dt><dd id="pool-failures">—</dd></div>
+                </dl>
+            </article>
+            <article class="panel jvm-panel">
+                <div class="panel-heading"><h3>JVM resources</h3><span>current process</span></div>
+                <dl>
+                    <div><dt>Heap used</dt><dd id="jvm-heap-used">—</dd></div>
+                    <div><dt>Heap committed</dt><dd id="jvm-heap-committed">—</dd></div>
+                    <div><dt>Heap maximum</dt><dd id="jvm-heap-max">—</dd></div>
+                    <div><dt>Live threads</dt><dd id="jvm-live-threads">—</dd></div>
+                    <div><dt>Peak threads</dt><dd id="jvm-peak-threads">—</dd></div>
+                    <div><dt>Processors</dt><dd id="jvm-processors">—</dd></div>
+                </dl>
+            </article>
+        </div>
+
+        <article class="panel table-panel">
+            <div class="panel-heading"><div><h3>Query telemetry</h3><p>Observed from real application operations since startup.</p></div></div>
+            <div class="table-scroll"><table>
+                <thead><tr><th>Operation</th><th>Calls</th><th>Failures</th><th>Retries</th><th>Average</th><th>Maximum</th></tr></thead>
+                <tbody id="operation-rows"><tr><td colspan="6">No operations observed yet.</td></tr></tbody>
+            </table></div>
+        </article>
+
+        <article class="panel table-panel">
+            <div class="panel-heading"><div><h3>Query plans</h3><p id="plan-captured">Read-only explain diagnostics; loading…</p></div></div>
+            <div class="table-scroll"><table>
+                <thead><tr><th>Operation</th><th>Scan</th><th>Index</th><th>Docs / keys examined</th><th>Returned</th><th>Detail</th></tr></thead>
+                <tbody id="plan-rows"><tr><td colspan="6">Loading optimizer plans…</td></tr></tbody>
+            </table></div>
+        </article>
+    </section>
+</main>
+
+<footer>Admin-only local diagnostics · automatically refreshes every 5 seconds</footer>
+<script src="/assets/health.js" defer></script>
+</body>
+</html>

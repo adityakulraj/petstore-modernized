@@ -76,7 +76,8 @@ test('public session, catalog, categories, filters, and product lookup have pari
   expect(await session.json()).toEqual({
     authenticated: false,
     username: '',
-    store: process.env.E2E_STORE
+    store: process.env.E2E_STORE,
+    admin: false
   });
 
   const catalog = await request.get('/api/v1/catalog/products');
@@ -170,6 +171,57 @@ test('structured logs are searchable by request ID only by the admin role', asyn
   }
 });
 
+test('health telemetry, pool metrics, and query plans are visible only to admin', async ({ request, playwright }) => {
+  await request.get('/api/v1/catalog/products');
+  await request.get('/api/v1/catalog/products/missing-health-probe');
+
+  const anonymous = await request.get('/api/v1/admin/health', { maxRedirects: 0 });
+  expect([302, 401]).toContain(anonymous.status());
+  const customer = await login(playwright, 'alice');
+  const admin = await login(playwright, 'admin');
+  try {
+    expect((await customer.context.get('/api/v1/admin/health')).status()).toBe(403);
+    const response = await admin.context.get('/api/v1/admin/health');
+    expect(response.status()).toBe(200);
+    const health = await response.json();
+    expect(health).toMatchObject({
+      status: 'UP',
+      store: process.env.E2E_STORE,
+      traffic: {
+        lifetimeRequests: expect.any(Number),
+        windowRequests: expect.any(Number),
+        windowClientErrors: expect.any(Number),
+        serverErrorRatePercent: expect.any(Number),
+        series: expect.any(Array)
+      },
+      jvm: { heapUsedBytes: expect.any(Number), liveThreads: expect.any(Number) },
+      database: {
+        pool: {
+          provider: expect.any(String), configuredMin: 1, configuredMax: 10,
+          total: expect.any(Number), active: expect.any(Number), idle: expect.any(Number)
+        },
+        operations: expect.any(Array),
+        queryPlans: { capturedAt: expect.any(String), plans: expect.any(Array) }
+      }
+    });
+    expect(health.uptimeSeconds).toBeGreaterThanOrEqual(0);
+    expect(health.traffic.series).toHaveLength(60);
+    expect(health.traffic.windowClientErrors).toBeGreaterThanOrEqual(1);
+    expect(health.database.operations).toContainEqual(expect.objectContaining({ operation: 'catalog.products.all' }));
+    expect(health.database.queryPlans.plans).toContainEqual(expect.objectContaining({ operation: 'orders.by_idempotency' }));
+    expect(health.database.queryPlans.plans.every(plan => ['IXSCAN', 'COLLSCAN', 'OTHER'].includes(plan.scanType))).toBe(true);
+    expect(health.database.queryPlans.plans).toContainEqual(expect.objectContaining({
+      operation: 'catalog.products.by_category', scanType: 'IXSCAN'
+    }));
+    expect(health.database.queryPlans.plans).toContainEqual(expect.objectContaining({
+      operation: 'orders.by_customer', scanType: 'IXSCAN'
+    }));
+  } finally {
+    await customer.context.dispose();
+    await admin.context.dispose();
+  }
+});
+
 test('protected APIs reject anonymous requests and mutations without CSRF', async ({ request, playwright }) => {
   for (const path of ['/api/v1/cart', '/api/v1/orders', '/api/v1/csrf']) {
     const response = await request.get(path, { maxRedirects: 0 });
@@ -221,7 +273,8 @@ test('invalid credentials fail and both configured users can authenticate and lo
       expect(await (await client.context.get('/api/v1/session')).json()).toEqual({
         authenticated: true,
         username: USERS[user],
-        store: process.env.E2E_STORE
+        store: process.env.E2E_STORE,
+        admin: false
       });
       const logout = await client.context.post('/logout', { headers: client.csrf, maxRedirects: 0 });
       expect(logout.status()).toBe(204);

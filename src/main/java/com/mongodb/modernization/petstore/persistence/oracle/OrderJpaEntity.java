@@ -31,7 +31,8 @@ class OrderJpaEntity {
     @Column(nullable = false, length = 30) String status;
     @Embedded AddressJpa shippingAddress;
     @ElementCollection(fetch = FetchType.EAGER)
-    @CollectionTable(name = "PS_ORDER_LINE", joinColumns = @JoinColumn(name = "ORDER_ID"))
+    @CollectionTable(name = "PS_ORDER_LINE", joinColumns = @JoinColumn(name = "ORDER_ID"),
+            indexes = @Index(name = "IX_PS_ORDER_LINE_ORDER", columnList = "ORDER_ID"))
     @OrderColumn(name = "LINE_NUMBER")
     List<OrderLineJpa> lines = new ArrayList<>();
     @Column(nullable = false, precision = 12, scale = 2) BigDecimal total;

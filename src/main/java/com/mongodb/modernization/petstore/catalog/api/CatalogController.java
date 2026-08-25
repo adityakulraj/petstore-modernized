@@ -21,10 +21,8 @@ public class CatalogController {
     @GetMapping("/products")
     public List<Product> products(@RequestParam(required = false) String category,
                                   @RequestParam(required = false) String query) {
-        var products = storefront.products().stream();
-        if (category != null && !category.isBlank()) {
-            products = products.filter(product -> product.categoryId().equalsIgnoreCase(category));
-        }
+        // Category filtering is database-backed so the category index is used; free-text contains preserves legacy semantics.
+        var products = storefront.products(category).stream();
         if (query != null && !query.isBlank()) {
             var needle = query.toLowerCase(Locale.ROOT).trim();
             products = products.filter(product -> (product.name() + " " + product.description())

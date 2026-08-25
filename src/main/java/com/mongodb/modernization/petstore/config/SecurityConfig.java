@@ -43,10 +43,11 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/", "/index.html", "/assets/**", "/api/v1/catalog/**", "/api/v1/session",
                                 "/actuator/health/**", "/error").permitAll()
+                        .requestMatchers("/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                         .requestMatchers("/actuator/**").hasRole("CUSTOMER")
                         .anyRequest().authenticated())
-                .formLogin(form -> form.defaultSuccessUrl("/", true))
+                .formLogin(form -> form.defaultSuccessUrl("/", false))
                 // Basic auth makes the read-only admin log endpoint convenient for local curl diagnostics.
                 .httpBasic(Customizer.withDefaults())
                 .logout(logout -> logout.logoutSuccessUrl("/"))
