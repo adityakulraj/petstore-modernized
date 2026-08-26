@@ -20,9 +20,11 @@ public class SessionController {
     public Map<String, Object> session(Authentication authentication) {
         var admin = authentication != null && authentication.getAuthorities().stream()
                 .anyMatch(authority -> authority.getAuthority().equals("ROLE_ADMIN"));
+        var supplier = authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(authority -> authority.getAuthority().equals("ROLE_SUPPLIER"));
         return Map.of("authenticated", authentication != null, "username",
                 authentication == null ? "" : authentication.getName(),
-                "store", properties.store().name().toLowerCase(), "admin", admin);
+                "store", properties.store().name().toLowerCase(), "admin", admin, "supplier", supplier);
     }
 
     @GetMapping("/csrf")

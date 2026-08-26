@@ -5,6 +5,7 @@ import com.mongodb.modernization.petstore.catalog.domain.Product;
 import com.mongodb.modernization.petstore.orders.application.DuplicateCheckoutException;
 import com.mongodb.modernization.petstore.orders.domain.Order;
 import com.mongodb.modernization.petstore.shared.domain.Address;
+import com.mongodb.modernization.petstore.supplier.application.SupplierService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -17,8 +18,12 @@ import java.util.List;
 public class StorefrontService implements ApplicationRunner {
     private static final Logger LOG = LoggerFactory.getLogger(StorefrontService.class);
     private final StorefrontStore store;
+    private final SupplierService supplier;
 
-    public StorefrontService(StorefrontStore store) { this.store = store; }
+    public StorefrontService(StorefrontStore store, SupplierService supplier) {
+        this.store = store;
+        this.supplier = supplier;
+    }
 
     public List<Product> products() { return store.products(); }
     public List<Product> products(String categoryId) { return store.products(categoryId); }
@@ -43,6 +48,7 @@ public class StorefrontService implements ApplicationRunner {
         var existing = store.orderByIdempotencyKey(customerId, key);
         if (existing.isPresent()) {
             logOrder("order.idempotency.replayed", existing.get());
+            handOffApprovedOrder(existing.get());
             return existing.get();
         }
         Order order;
@@ -55,6 +61,9 @@ public class StorefrontService implements ApplicationRunner {
             replayed = true;
         }
         logOrder(replayed ? "order.idempotency.replayed" : "order.placed", order);
+        // This durable, idempotent hand-off is attempted for both new orders and replays. If the
+        // first hand-off is interrupted after checkout commits, retrying checkout repairs it.
+        handOffApprovedOrder(order);
         return order;
     }
     public List<Order> orders(String customerId) { return store.orders(customerId); }
@@ -82,5 +91,9 @@ public class StorefrontService implements ApplicationRunner {
                 .addKeyValue("lineCount", order.lines().size())
                 .addKeyValue("total", order.total())
                 .log("Order operation completed");
+    }
+
+    private void handOffApprovedOrder(Order order) {
+        if (order.supplierReady()) supplier.ensurePurchaseOrder(order);
     }
 }

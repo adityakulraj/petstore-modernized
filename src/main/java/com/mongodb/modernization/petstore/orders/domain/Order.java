@@ -8,14 +8,31 @@ import java.time.Instant;
 import java.util.List;
 
 public record Order(String id, String customerId, String idempotencyKey, Instant createdAt,
-                    String status, Address shippingAddress, List<OrderLine> lines, BigDecimal total) {
+                    String status, Address shippingAddress, List<OrderLine> lines, BigDecimal total,
+                    long version, Instant reviewedAt, String reviewedBy) {
+    public static final String PENDING = "PENDING";
+    public static final String APPROVED = "APPROVED";
+    public static final String DENIED = "DENIED";
+    public static final String COMPLETED = "COMPLETED";
+
     public Order {
         lines = List.copyOf(lines);
     }
 
     public static Order placed(String id, String customerId, String idempotencyKey, Instant createdAt,
                                Address address, Cart cart) {
-        return new Order(id, customerId, idempotencyKey, createdAt, "PLACED", address,
-                cart.lines().stream().map(OrderLine::from).toList(), cart.total());
+        return submitted(id, customerId, idempotencyKey, createdAt, address, cart,
+                new BigDecimal("500.00"));
+    }
+
+    public static Order submitted(String id, String customerId, String idempotencyKey, Instant createdAt,
+                                  Address address, Cart cart, BigDecimal approvalThreshold) {
+        var status = cart.total().compareTo(approvalThreshold) < 0 ? APPROVED : PENDING;
+        return new Order(id, customerId, idempotencyKey, createdAt, status, address,
+                cart.lines().stream().map(OrderLine::from).toList(), cart.total(), 0, null, null);
+    }
+
+    public boolean supplierReady() {
+        return APPROVED.equals(status) || COMPLETED.equals(status);
     }
 }

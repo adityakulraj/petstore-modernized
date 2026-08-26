@@ -23,6 +23,8 @@ export ORACLE_USERNAME="$E2E_ORACLE_USERNAME"
 export ORACLE_PASSWORD="$E2E_ORACLE_PASSWORD"
 export ADMIN_USERNAME=admin
 export ADMIN_PASSWORD=admin
+export SUPPLIER_USERNAME=supplier
+export SUPPLIER_PASSWORD=supplier
 
 if [[ "$STORE" == "mongo" ]]; then
   export APP_PORT=18080

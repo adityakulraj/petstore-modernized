@@ -3,6 +3,7 @@ package com.mongodb.modernization.petstore.persistence.oracle;
 import com.mongodb.modernization.petstore.cart.domain.Cart;
 import com.mongodb.modernization.petstore.catalog.domain.Product;
 import com.mongodb.modernization.petstore.catalog.application.SeedProducts;
+import com.mongodb.modernization.petstore.config.AppProperties;
 import com.mongodb.modernization.petstore.orders.application.DuplicateCheckoutException;
 import com.mongodb.modernization.petstore.orders.application.InsufficientStockException;
 import com.mongodb.modernization.petstore.orders.domain.Order;
@@ -21,6 +22,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -36,13 +38,16 @@ class OracleStorefrontStore implements StorefrontStore {
     private final JpaOrderRepository orders;
     private final TransactionTemplate transactions;
     private final DatabaseExecutor database;
+    private final BigDecimal approvalThreshold;
     private final Clock clock = Clock.systemUTC();
 
     OracleStorefrontStore(JpaProductRepository products, JpaCartRepository carts, JpaOrderRepository orders,
-                          PlatformTransactionManager transactionManager, DatabaseExecutor database) {
+                          PlatformTransactionManager transactionManager, DatabaseExecutor database,
+                          AppProperties properties) {
         this.products = products; this.carts = carts; this.orders = orders;
         this.transactions = new TransactionTemplate(transactionManager);
         this.database = database;
+        this.approvalThreshold = properties.admin().approvalThreshold();
     }
 
     @Override
@@ -106,9 +111,12 @@ class OracleStorefrontStore implements StorefrontStore {
     }
 
     private Order checkoutOnce(String customerId, long expectedCartVersion, String key, Address address) {
+        // Serialize checkouts for one customer's cart, then re-check the idempotency key while
+        // holding the row lock. A simultaneous retry waits for the winner and returns its order.
+        var cartEntity = carts.findByIdForCheckout(customerId)
+                .orElseThrow(() -> new StoreConflictException("Cart is empty"));
         var existing = orders.findByCustomerIdAndIdempotencyKey(customerId, key);
         if (existing.isPresent()) return existing.get().toDomain();
-        var cartEntity = carts.findById(customerId).orElseThrow(() -> new StoreConflictException("Cart is empty"));
         var cart = cartEntity.toDomain();
         requireVersion(cart.version(), expectedCartVersion);
         if (cart.lines().isEmpty()) throw new StoreConflictException("Cart is empty");
@@ -118,12 +126,15 @@ class OracleStorefrontStore implements StorefrontStore {
                 throw new InsufficientStockException(line.productId());
             }
         }
-        var order = Order.placed(UUID.randomUUID().toString(), customerId, key, Instant.now(clock), address, cart);
+        var order = Order.submitted(UUID.randomUUID().toString(), customerId, key, Instant.now(clock), address,
+                cart, approvalThreshold);
         try {
-            orders.saveAndFlush(new OrderJpaEntity(order));
+            var persistedOrder = orders.saveAndFlush(new OrderJpaEntity(order));
             cartEntity.replaceWith(Cart.empty(cart.id(), customerId, cart.version()));
             carts.saveAndFlush(cartEntity);
-            return order;
+            // Hibernate owns the initial @Version value. Return that persisted value so the first
+            // administrator/supplier command uses the same optimistic token as the database row.
+            return persistedOrder.toDomain();
         } catch (DataIntegrityViolationException duplicate) {
             throw new DuplicateCheckoutException(duplicate);
         } catch (ObjectOptimisticLockingFailureException conflict) {

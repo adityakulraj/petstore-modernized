@@ -5,12 +5,14 @@ const { SEED_STOCK } = require('./support/store-state');
 const USERS = Object.freeze({
   alice: process.env.DEMO_USERNAME || 'alice',
   aditya: process.env.DEMO_ADDITIONAL_USERNAME || 'aditya',
-  admin: process.env.ADMIN_USERNAME || 'admin'
+  admin: process.env.ADMIN_USERNAME || 'admin',
+  supplier: process.env.SUPPLIER_USERNAME || 'supplier'
 });
 const PASSWORDS = Object.freeze({
   alice: process.env.DEMO_PASSWORD || 'petstore-demo',
   aditya: process.env.DEMO_ADDITIONAL_PASSWORD || 'password',
-  admin: process.env.ADMIN_PASSWORD || 'admin'
+  admin: process.env.ADMIN_PASSWORD || 'admin',
+  supplier: process.env.SUPPLIER_PASSWORD || 'supplier'
 });
 const ADDRESS = Object.freeze({
   fullName: 'API Test Customer',
@@ -77,7 +79,8 @@ test('public session, catalog, categories, filters, and product lookup have pari
     authenticated: false,
     username: '',
     store: process.env.E2E_STORE,
-    admin: false
+    admin: false,
+    supplier: false
   });
 
   const catalog = await request.get('/api/v1/catalog/products');
@@ -223,11 +226,12 @@ test('health telemetry, pool metrics, and query plans are visible only to admin'
 });
 
 test('protected APIs reject anonymous requests and mutations without CSRF', async ({ request, playwright }) => {
-  for (const path of ['/api/v1/cart', '/api/v1/orders', '/api/v1/csrf']) {
+  for (const path of ['/api/v1/cart', '/api/v1/orders']) {
     const response = await request.get(path, { maxRedirects: 0 });
     expect(response.status(), path).toBe(401);
     expect(response.headers()['www-authenticate'], path).toMatch(/^Basic/);
   }
+  expect((await request.get('/api/v1/csrf')).status()).toBe(200);
 
   const anonymousMutation = await request.post('/api/v1/cart/items', {
     data: { productId: 'AV-CB-01', quantity: 1, expectedVersion: 0 }
@@ -274,7 +278,8 @@ test('invalid credentials fail and both configured users can authenticate and lo
         authenticated: true,
         username: USERS[user],
         store: process.env.E2E_STORE,
-        admin: false
+        admin: false,
+        supplier: false
       });
       const logout = await client.context.post('/logout', { headers: client.csrf, maxRedirects: 0 });
       expect(logout.status()).toBe(204);
@@ -452,7 +457,7 @@ test('checkout creates one immutable order, clears the cart, decrements stock, a
     expect(first).toMatchObject({
       customerId: USERS.alice,
       idempotencyKey: key,
-      status: 'PLACED',
+      status: 'APPROVED',
       shippingAddress: ADDRESS,
       lines: [{ productId: 'AV-CB-01', productName: 'Canary', unitPrice: 125, quantity: 2, subtotal: 250 }],
       total: 250
@@ -568,4 +573,165 @@ test('idempotency keys and order history are scoped per user', async ({ playwrig
     await alice.context.dispose();
     await aditya.context.dispose();
   }
+});
+
+test('admin approval lifecycle gates supplier handoff and denial restores stock exactly once', async ({ playwright, request }) => {
+  const anonymous = await request.get('/api/v1/admin/orders', { maxRedirects: 0 });
+  expect(anonymous.status()).toBe(401);
+  const customer = await login(playwright, 'alice');
+  const adminA = await login(playwright, 'admin');
+  const adminB = await login(playwright, 'admin');
+  const supplier = await login(playwright, 'supplier');
+  try {
+    expect((await customer.context.get('/api/v1/admin/orders')).status()).toBe(403);
+
+    const approvalCart = await (await addItem(customer, 'K9-BD-01', 1, (await cart(customer)).version)).json();
+    const pending = await (await checkout(customer, approvalCart.version, 'admin-approval-e2e')).json();
+    expect(pending).toMatchObject({ status: 'PENDING', total: 850, reviewedAt: null, reviewedBy: null });
+    expect((await (await supplier.context.get('/api/v1/supplier/purchase-orders')).json())
+      .some(po => po.orderId === pending.id)).toBe(false);
+
+    const queued = await adminA.context.get('/api/v1/admin/orders');
+    expect(queued.status()).toBe(200);
+    expect(await queued.json()).toContainEqual(expect.objectContaining({ id: pending.id, status: 'PENDING' }));
+    const approve = client => client.context.post(`/api/v1/admin/orders/${pending.id}/decision`, {
+      headers: client.csrf, data: { expectedVersion: pending.version, decision: 'APPROVED' }
+    });
+    const approvals = await Promise.all([approve(adminA), approve(adminB)]);
+    expect(approvals.map(response => response.status())).toEqual([200, 200]);
+    const approved = await Promise.all(approvals.map(response => response.json()));
+    expect(approved[0]).toMatchObject({ id: pending.id, status: 'APPROVED', version: pending.version + 1, reviewedBy: USERS.admin });
+    expect(approved[1]).toMatchObject({ id: pending.id, status: 'APPROVED', version: pending.version + 1 });
+    const purchaseOrders = await (await supplier.context.get('/api/v1/supplier/purchase-orders')).json();
+    expect(purchaseOrders.filter(po => po.orderId === pending.id)).toHaveLength(1);
+    const opposite = await adminA.context.post(`/api/v1/admin/orders/${pending.id}/decision`, {
+      headers: adminA.csrf, data: { expectedVersion: pending.version, decision: 'DENIED' }
+    });
+    expect(opposite.status()).toBe(409);
+
+    const beforeDenied = await product(customer.context, 'K9-RT-01');
+    const denialCart = await (await addItem(customer, 'K9-RT-01', 1, (await cart(customer)).version)).json();
+    const toDeny = await (await checkout(customer, denialCart.version, 'admin-denial-e2e')).json();
+    expect(toDeny.status).toBe('PENDING');
+    expect(await product(customer.context, 'K9-RT-01')).toMatchObject({ stock: beforeDenied.stock - 1, version: beforeDenied.version + 1 });
+    const deny = () => adminA.context.post(`/api/v1/admin/orders/${toDeny.id}/decision`, {
+      headers: adminA.csrf, data: { expectedVersion: toDeny.version, decision: 'DENIED' }
+    });
+    const denied = await deny();
+    const deniedReplay = await deny();
+    expect(denied.status()).toBe(200);
+    expect(deniedReplay.status()).toBe(200);
+    expect(await denied.json()).toMatchObject({ status: 'DENIED', version: toDeny.version + 1, reviewedBy: USERS.admin });
+    expect(await deniedReplay.json()).toMatchObject({ status: 'DENIED', version: toDeny.version + 1 });
+    expect(await product(customer.context, 'K9-RT-01')).toMatchObject({ stock: beforeDenied.stock, version: beforeDenied.version + 2 });
+    expect((await (await supplier.context.get('/api/v1/supplier/purchase-orders')).json())
+      .some(po => po.orderId === toDeny.id)).toBe(false);
+  } finally {
+    await customer.context.dispose();
+    await adminA.context.dispose();
+    await adminB.context.dispose();
+    await supplier.context.dispose();
+  }
+});
+
+test('supplier role safely updates inventory and idempotently processes purchase orders', async ({ playwright, request }) => {
+  const anonymousInventory = await request.get('/api/v1/supplier/inventory', { maxRedirects: 0 });
+  expect(anonymousInventory.status()).toBe(401);
+  const customer = await login(playwright, 'alice');
+  const supplier = await login(playwright, 'supplier');
+  try {
+    expect((await customer.context.get('/api/v1/supplier/inventory')).status()).toBe(403);
+    expect(await (await supplier.context.get('/api/v1/session')).json()).toMatchObject({
+      authenticated: true, username: USERS.supplier, supplier: true, admin: false
+    });
+
+    const inventoryResponse = await supplier.context.get('/api/v1/supplier/inventory');
+    expect(inventoryResponse.status()).toBe(200);
+    const initial = (await inventoryResponse.json()).find(item => item.id === 'AV-CB-01');
+    const firstUpdate = await supplier.context.put('/api/v1/supplier/inventory/AV-CB-01', {
+      headers: supplier.csrf, data: { expectedVersion: initial.version, quantity: 12 }
+    });
+    expect(firstUpdate.status()).toBe(200);
+    const updated = await firstUpdate.json();
+    expect(updated).toMatchObject({ stock: 12, version: 1 });
+    const identicalReplay = await supplier.context.put('/api/v1/supplier/inventory/AV-CB-01', {
+      headers: supplier.csrf, data: { expectedVersion: initial.version, quantity: 12 }
+    });
+    expect(identicalReplay.status()).toBe(200);
+    expect(await identicalReplay.json()).toMatchObject({ stock: 12, version: 1 });
+    const staleCompetingUpdate = await supplier.context.put('/api/v1/supplier/inventory/AV-CB-01', {
+      headers: supplier.csrf, data: { expectedVersion: initial.version, quantity: 13 }
+    });
+    expect(staleCompetingUpdate.status()).toBe(409);
+
+    const added = await (await addItem(customer, 'FI-SW-02', 1, (await cart(customer)).version)).json();
+    const placed = await (await checkout(customer, added.version)).json();
+    const purchaseOrdersResponse = await supplier.context.get('/api/v1/supplier/purchase-orders');
+    expect(purchaseOrdersResponse.status()).toBe(200);
+    const purchaseOrder = (await purchaseOrdersResponse.json()).find(item => item.orderId === placed.id);
+    expect(purchaseOrder).toMatchObject({ id: placed.id, status: 'READY' });
+    expect(purchaseOrder.version).toBeGreaterThanOrEqual(0);
+
+    const process = () => supplier.context.post(`/api/v1/supplier/purchase-orders/${purchaseOrder.id}/process`, {
+      headers: supplier.csrf, data: { expectedVersion: purchaseOrder.version }
+    });
+    const processedResponses = await Promise.all([process(), process()]);
+    expect(processedResponses.map(response => response.status())).toEqual([200, 200]);
+    const processed = await Promise.all(processedResponses.map(response => response.json()));
+    expect(processed[0]).toMatchObject({ id: purchaseOrder.id, status: 'PROCESSED' });
+    expect(processed[1]).toMatchObject({ id: purchaseOrder.id, status: 'PROCESSED' });
+    expect(processed[0].version).toBeGreaterThan(0);
+    expect(processed[1].version).toBe(processed[0].version);
+    const history = await (await customer.context.get('/api/v1/orders')).json();
+    expect(history.find(order => order.id === placed.id).status).toBe('COMPLETED');
+
+    const missingCsrf = await supplier.context.put('/api/v1/supplier/inventory/AV-CB-01', {
+      data: { expectedVersion: 1, quantity: 10 }
+    });
+    expect(missingCsrf.status()).toBe(403);
+  } finally {
+    await customer.context.dispose();
+    await supplier.context.dispose();
+  }
+});
+
+test('customer account registration, login, profile read/update, validation, and duplicates work end to end', async ({ playwright, request }) => {
+  const username = 'api-account';
+  const registration = {
+    username, password: 'a-safe-test-password', fullName: 'API Account', email: 'api-account@example.test',
+    phone: '+1-555-0199', address: { ...ADDRESS, fullName: 'API Account' }, preferredLanguage: 'en',
+    favoriteCategory: 'CATS', myListPreference: true, bannerPreference: false
+  };
+  const invalid = await request.post('/api/v1/accounts', { data: { ...registration, username: 'x', password: 'short' } });
+  expect(invalid.status()).toBe(400);
+
+  const created = await request.post('/api/v1/accounts', { data: registration });
+  expect(created.status()).toBe(200);
+  const createdBody = await created.json();
+  expect(createdBody).toMatchObject({ username, fullName: 'API Account', favoriteCategory: 'CATS' });
+  expect(createdBody).not.toHaveProperty('password');
+  expect(createdBody).not.toHaveProperty('passwordHash');
+  const duplicate = await request.post('/api/v1/accounts', { data: registration });
+  expect(duplicate.status()).toBe(409);
+
+  const account = await login(playwright, username, registration.password);
+  try {
+    const me = await account.context.get('/api/v1/accounts/me');
+    expect(me.status()).toBe(200);
+    expect(await me.json()).toMatchObject(createdBody);
+    const update = await account.context.put('/api/v1/accounts/me', {
+      headers: account.csrf,
+      data: {
+        fullName: 'Updated API Account', email: 'updated@example.test', phone: '+1-555-0101',
+        address: { ...ADDRESS, fullName: 'Updated API Account', city: 'Mumbai' }, preferredLanguage: 'fr',
+        favoriteCategory: 'DOGS', myListPreference: false, bannerPreference: true
+      }
+    });
+    expect(update.status()).toBe(200);
+    expect(await update.json()).toMatchObject({
+      username, fullName: 'Updated API Account', preferredLanguage: 'fr', favoriteCategory: 'DOGS',
+      myListPreference: false, bannerPreference: true, address: { city: 'Mumbai' }
+    });
+    expect((await account.context.put('/api/v1/accounts/me', { data: registration })).status()).toBe(403);
+  } finally { await account.context.dispose(); }
 });

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="PetStore administrator order approval queue">
+    <title>PetStore Order Approvals</title>
+    <link rel="stylesheet" href="/assets/app.css">
+    <link rel="stylesheet" href="/assets/admin-orders.css">
+</head>
+<body class="admin-orders-page">
+<header class="topbar">
+    <a class="brand" href="/admin/orders.html"><span>Pet</span>Store Admin</a>
+    <nav aria-label="Administrator navigation">
+        <a class="nav-link" href="/admin/orders.html" aria-current="page">Order approvals</a>
+        <a class="nav-link" href="/admin/health.html">Health</a>
+        <a class="nav-link" href="/api/v1/admin/logs?limit=200">Logs</a>
+    </nav>
+    <div id="session-actions"></div>
+</header>
+
+<main class="admin-main">
+    <section class="admin-hero">
+        <div><p class="eyebrow">ORDER GOVERNANCE</p><h1>Approval queue</h1>
+            <p>Review high-value customer orders before they enter supplier fulfilment.</p></div>
+        <div class="store-pill"><span id="store-name">…</span> data store</div>
+    </section>
+
+    <section class="summary-grid" aria-label="Order status summary">
+        <article><span>Pending review</span><strong id="pending-count">—</strong></article>
+        <article><span>Approved</span><strong id="approved-count">—</strong></article>
+        <article><span>Denied</span><strong id="denied-count">—</strong></article>
+        <article><span>Completed</span><strong id="completed-count">—</strong></article>
+    </section>
+
+    <section class="content-section admin-section">
+        <div class="section-heading"><div><p class="eyebrow">REQUIRES A DECISION</p><h2>Pending orders</h2></div>
+            <button class="secondary" id="refresh-orders">Refresh</button></div>
+        <div id="pending-orders" class="order-list" aria-live="polite"></div>
+    </section>
+
+    <section class="content-section admin-section history-section">
+        <div class="section-heading"><div><p class="eyebrow">AUDIT TRAIL</p><h2>Processed orders</h2></div></div>
+        <div class="table-shell"><table>
+            <thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Status</th><th>Reviewed</th><th>Reviewer</th></tr></thead>
+            <tbody id="history-body"></tbody>
+        </table></div>
+    </section>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="/assets/admin-orders.js" defer></script>
+</body>
+</html>

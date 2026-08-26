@@ -13,6 +13,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OrderColumn;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.Version;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -36,15 +37,25 @@ class OrderJpaEntity {
     @OrderColumn(name = "LINE_NUMBER")
     List<OrderLineJpa> lines = new ArrayList<>();
     @Column(nullable = false, precision = 12, scale = 2) BigDecimal total;
+    @Version long version;
+    @Column(name = "REVIEWED_AT") Instant reviewedAt;
+    @Column(name = "REVIEWED_BY", length = 100) String reviewedBy;
 
     protected OrderJpaEntity() {}
     OrderJpaEntity(Order order) {
         id = order.id(); customerId = order.customerId(); idempotencyKey = order.idempotencyKey();
         createdAt = order.createdAt(); status = order.status(); shippingAddress = new AddressJpa(order.shippingAddress());
         order.lines().stream().map(OrderLineJpa::new).forEach(lines::add); total = order.total();
+        reviewedAt = order.reviewedAt(); reviewedBy = order.reviewedBy();
     }
     Order toDomain() {
         return new Order(id, customerId, idempotencyKey, createdAt, status, shippingAddress.toDomain(),
-                lines.stream().map(OrderLineJpa::toDomain).toList(), total);
+                lines.stream().map(OrderLineJpa::toDomain).toList(), total, version, reviewedAt, reviewedBy);
+    }
+
+    void review(String decision, Instant when, String reviewer) {
+        status = decision;
+        reviewedAt = when;
+        reviewedBy = reviewer;
     }
 }

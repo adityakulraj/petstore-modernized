@@ -7,7 +7,7 @@ APP_STORE=oracle  # JPA + Oracle transactions and @Version
 APP_STORE=mongo   # MongoDB documents, transactions, and @Version
 ```
 
-The application uses Spring Boot 4.1.x, a modular-monolith package structure, a same-origin web UI, externalized configuration, health probes, idempotent checkout, conditional inventory decrements, and optimistic cart concurrency.
+The application uses Spring Boot 4.1.x, a modular-monolith package structure, same-origin storefront, administrator, and supplier UIs, externalized configuration, health probes, idempotent checkout and supplier hand-off, conditional inventory updates, optimistic concurrency, and persisted customer accounts.
 
 ## Fastest run: Docker Compose
 
@@ -31,7 +31,8 @@ Open [http://localhost:8080](http://localhost:8080). The local accounts are:
 |---|---|---|
 | Customer 1 | `alice` | `petstore-demo` |
 | Customer 2 | `aditya` | `password` |
-| Operations dashboard and logs | `admin` | `admin` |
+| Supplier portal | `supplier` | `supplier` |
+| Order approvals, operations dashboard, and logs | `admin` | `admin` |
 
 These are demo-only defaults. Override every password outside local development.
 
@@ -42,7 +43,44 @@ docker compose --profile mongo down
 docker compose --profile oracle down
 ```
 
-The two app services intentionally share port 8080; run one profile at a time. Switching `APP_STORE` activates the matching Spring profile and excludes the unused database auto-configuration, so the application never needs both databases online.
+The two app services intentionally share port 8080; run one profile at a time. Switching `APP_STORE` activates the matching Spring profile and excludes the unused database auto-configuration, so the application never needs both databases online or multiple PetStore app ports.
+
+## Customer accounts
+
+The storefront now supports self-service account registration and profile management at **Account** in the UI. Customer data is persisted in the selected store (MongoDB or Oracle), and passwords are stored as BCrypt hashes only. A customer can manage their contact details, default shipping address, preferred language/category, and display preferences.
+
+The API is:
+
+```text
+POST /api/v1/accounts       Register a customer (public)
+GET  /api/v1/accounts/me    Read the signed-in customer's profile
+PUT  /api/v1/accounts/me    Update the signed-in customer's profile
+```
+
+Registration is deliberately exempt from CSRF because it cannot operate as an
+existing signed-in user. Every authenticated mutation, including profile updates,
+continues to require the normal CSRF cookie/token. Account registration and
+profile updates produce structured `account.registered` / `account.profile.updated`
+log events with request and correlation IDs. Their `account.by_username` and
+`account.save` database operations also appear in the protected operations
+dashboard telemetry.
+
+## Administrator order approvals
+
+Open [http://localhost:8080/admin/orders.html](http://localhost:8080/admin/orders.html) and sign in with `admin` / `admin`. Orders below the configurable `$500.00` threshold are automatically approved. Orders at or above the threshold remain `PENDING` until an administrator approves or denies them. Approval creates exactly one supplier PO; denial restores reserved inventory exactly once.
+
+Decisions are versioned, CSRF-protected, and replay-safe. Two opposite decisions have one winner and one HTTP 409 conflict, while duplicate same-decision requests converge on the committed result. Decision logs and database timings appear in the existing operations dashboard. See [the state machine, concurrency diagrams, and manual walkthrough](docs/feature-admin-order-approval.md).
+
+## Supplier portal
+
+Open [http://localhost:8080/supplier/](http://localhost:8080/supplier/) and sign in with `supplier` / `supplier`.
+The supplier can view and replace absolute inventory quantities, view purchase orders created by customer
+checkout, and process each purchase order. Inventory PUT retries are idempotent, stale competing versions receive
+HTTP 409, one customer order creates one durable supplier PO, and concurrent process retries converge on one
+`PROCESSED` result. The matching customer order becomes `COMPLETED` in the same database transaction.
+
+The supplier flow, reliability decisions, diagrams, and manual walkthrough are documented in
+[docs/feature-supplier-portal.md](docs/feature-supplier-portal.md).
 
 ## Run the application outside Docker
 
@@ -82,17 +120,9 @@ curl -u admin:admin 'http://localhost:8080/api/v1/admin/logs?limit=200'
 
 For a host-run app, the same newline-delimited JSON is in `logs/petstore.log`. In Docker it is persisted in the project `app-logs` volume at `/app/logs/petstore.log`. The endpoint accepts only an optional request ID and a limit from 1 to 1000; callers cannot choose a file path. Customer accounts receive HTTP 403 and anonymous calls receive HTTP 401.
 
-If MongoDB and Oracle app processes are running simultaneously on ports 8080 and 8081, respectively, use:
-
-- MongoDB: `http://localhost:8080/api/v1/admin/logs`
-- Oracle: `http://localhost:8081/api/v1/admin/logs`
-
 ## Health and database performance dashboard
 
-Sign in with `admin/admin` and open [http://localhost:8080/admin/health.html](http://localhost:8080/admin/health.html). When the host-run MongoDB and Oracle applications are both active, use:
-
-- MongoDB: [http://localhost:8080/admin/health.html](http://localhost:8080/admin/health.html)
-- Oracle: [http://localhost:8081/admin/health.html](http://localhost:8081/admin/health.html)
+Sign in with `admin/admin` and open [http://localhost:8080/admin/health.html](http://localhost:8080/admin/health.html).
 
 The page refreshes every five seconds and shows application status, process uptime, requests/minute, rolling 4xx and 5xx rates, average/max HTTP latency, JVM heap/threads, connection-pool utilization, and per-store-operation calls/failures/retries/latency. It also shows read-only query-plan diagnostics: MongoDB `executionStats` including `COLLSCAN`, `IXSCAN`, documents and keys examined; Oracle optimizer scan type, index, estimated rows, and cost. Query plans are cached for 60 seconds so dashboard polling does not repeatedly run `explain` work.
 
@@ -108,7 +138,7 @@ HTTP and query telemetry is deliberately local and in memory: it resets on appli
 
 Both implementations use bounded connection pools. Oracle uses HikariCP; one MongoClient supplies the MongoDB Java driver's built-in pool. The defaults are 1 minimum and 10 maximum connections, a 10-second acquisition wait, and five-minute maximum idle time. Pool size and live active/idle/waiting counts are visible on the dashboard.
 
-Transient failures use a maximum of five attempts with capped exponential equal jitter (25 ms initial, 500 ms cap). The half-cap delay floor prevents a burst of immediate retries from exhausting the budget while a competing transaction is still committing. Retries are limited to reads and transactionally idempotent checkout. Cart mutations are observed but never blindly replayed after an ambiguous commit, because doing so could apply a non-idempotent quantity change twice. MongoDB driver `retryReads` and `retryWrites` also remain enabled.
+Transient failures use a maximum of five attempts with capped exponential equal jitter (25 ms initial, 500 ms cap). The half-cap delay floor prevents a burst of immediate retries from exhausting the budget while a competing transaction is still committing. Retries are limited to reads and transactionally idempotent checkout, supplier, and administrator-decision operations. Cart mutations are observed but never blindly replayed after an ambiguous commit, because doing so could apply a non-idempotent quantity change twice. MongoDB driver `retryReads` and `retryWrites` also remain enabled.
 
 Indexes match the real query shapes in both stores: product category; customer + idempotency key (unique); customer + descending creation time; Oracle cart-line customer and order-line order joins; plus each store's primary-key indexes. The category API now pushes category filtering into the selected database so its index is actually used. The unconstrained seven-row catalog query intentionally remains a full scan; arbitrary substring search preserves legacy behavior and is filtered after that small result set rather than pretending a B-tree index can accelerate contains-anywhere matching.
 
@@ -128,9 +158,9 @@ npm run e2e:api:oracle
 npm run e2e:api:all
 ```
 
-The runner builds and starts a disposable Compose project on non-default ports, executes tests serially, resets carts/orders/inventory before and after every test, verifies all seven product stock/version values after each reset, and deletes only the disposable test volumes. It refuses to reset a project whose name does not start with `petstore-e2e-`, so your normal local database is not a valid reset target.
+The runner builds and starts a disposable Compose project on non-default ports, executes tests serially, resets carts/customer orders/supplier purchase orders/inventory before and after every test, verifies all seven product stock/version values after each reset, and deletes only the disposable test volumes. It refuses to reset a project whose name does not start with `petstore-e2e-`, so your normal local database is not a valid reset target.
 
-The API suite covers public catalog/session APIs, authentication and authorization, CSRF, both customer accounts, cart CRUD and validation, order history, checkout rollback, out-of-stock behavior, stale versions, two-user inventory races, simultaneous cart updates, and concurrent idempotency retries. Run API plus browser tests with:
+The API suite covers public catalog/session APIs, authentication and authorization for customer/admin/supplier roles, CSRF, customer registration/profile lifecycle, both demo accounts, cart CRUD and validation, order history, checkout rollback, out-of-stock behavior, stale versions, two-user inventory races, simultaneous cart updates, concurrent idempotency retries, administrator approval/denial races and inventory restoration, supplier inventory replacement, and concurrent supplier PO processing. Run API plus browser tests with:
 
 ```bash
 npx playwright install chromium
@@ -139,6 +169,8 @@ npm run e2e:oracle
 ```
 
 See the [complete testing guide and executable coverage matrix](e2e/README.md) for every scenario and direct links to its test code.
+
+See [the Oracle and MongoDB schema diagrams](docs/database-schema.md) for every table/collection, column/field, primary key, enforced foreign key, logical reference, unique constraint, and index.
 
 Oracle normally needs about 2 GB by itself. On a 6 GB Docker VM, stop another local Oracle container before running the isolated Oracle suite; `docker compose stop oracle` preserves its data and `docker compose start oracle` restores it.
 
@@ -176,11 +208,14 @@ curl http://localhost:8080/actuator/health/readiness
 | `DB_RETRY_INITIAL_DELAY` | `25ms` | Initial exponential-backoff ceiling. |
 | `DB_RETRY_MAX_DELAY` | `500ms` | Maximum jittered retry delay. |
 | `DEMO_USERNAME` | `alice` | Local form-login user. |
+| `SUPPLIER_USERNAME` | `supplier` | Local supplier portal user. |
+| `SUPPLIER_PASSWORD` | `supplier` | Local supplier portal password; override outside local development. |
 | `DEMO_PASSWORD` | `petstore-demo` | Local form-login password; override outside a demo. |
 | `DEMO_ADDITIONAL_USERNAME` | `aditya` | Additional local form-login user. |
 | `DEMO_ADDITIONAL_PASSWORD` | `password` | Additional local form-login password; override outside a demo. |
 | `ADMIN_USERNAME` | `admin` | Local log-viewer username. |
 | `ADMIN_PASSWORD` | `admin` | Local log-viewer password; override outside a demo. |
+| `ORDER_APPROVAL_THRESHOLD` | `500.00` | Orders below this total auto-approve; orders at or above it require administrator review. |
 | `LOG_FILE` | `logs/petstore.log` | JSON log file read by the protected endpoint. |
 | `LOG_MAX_FILE_SIZE` | `10MB` | Maximum size before the local log rotates. |
 | `LOG_MAX_HISTORY` | `7` | Number of rotated local log files retained. |
@@ -204,6 +239,7 @@ curl http://localhost:8080/actuator/health/readiness
 - Checkout, inventory decrement, order insert, and cart clear share one database transaction. MongoDB runs as a replica set because transactions are unavailable on standalone deployments.
 - `(customerId, idempotencyKey)` is unique. Repeating a successful checkout key returns the original order and cannot create a second order.
 - Order lines and shipping address are purchase-time snapshots, so later catalog/profile changes do not rewrite history.
+- High-value checkout reserves stock as `PENDING`; approval emits one supplier PO, while denial restores stock in the decision transaction. Decision replays are idempotent and opposite races have one winner.
 - The UI calculates nothing authoritative: quantities are validated and totals are recomputed from server-held prices.
 
 ## Navigation for the panel
@@ -212,6 +248,7 @@ curl http://localhost:8080/actuator/health/readiness
 |---|---|
 | Shared persistence contract | `shared/application/StorefrontStore.java` |
 | Business orchestration | `shared/application/StorefrontService.java` |
+| Administrator approval orchestration | `orders/application/AdminOrderService.java`, `orders/application/AdminOrderStore.java` |
 | Cart rules | `cart/domain/Cart.java` |
 | Request validation | `cart/api/CartController.java`, `orders/api/OrderController.java` |
 | Oracle transactions | `persistence/oracle/OracleStorefrontStore.java` |
@@ -222,6 +259,7 @@ curl http://localhost:8080/actuator/health/readiness
 | MongoDB pool and explain diagnostics | `persistence/mongo/MongoObservabilityConfig.java`, `MongoDatabaseDiagnostics.java` |
 | Oracle pool and explain diagnostics | `persistence/oracle/OracleDatabaseDiagnostics.java` |
 | Operations dashboard | `static/admin/health.html`, `static/assets/health.js` |
+| Approval dashboard | `static/admin/orders.html`, `static/assets/admin-orders.js` |
 | UI | `src/main/resources/static/` |
 | Tests | `src/test/` and `e2e/` |
 

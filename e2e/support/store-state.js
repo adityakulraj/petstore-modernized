@@ -40,7 +40,9 @@ function resetMongo(project) {
     .join('');
   const script = `
     db.carts.deleteMany({});
+    db.supplierPurchaseOrders.deleteMany({});
     db.orders.deleteMany({});
+    db.customerAccounts.deleteMany({_id: {$nin: ['alice', 'aditya']}});
     ${updates}
     if (db.products.countDocuments({}) !== ${Object.keys(SEED_STOCK).length}) {
       throw new Error('Unexpected seeded product count');
@@ -55,10 +57,13 @@ function resetOracle(project) {
     .join(' ');
   const sql = `
     WHENEVER SQLERROR EXIT SQL.SQLCODE
+    DELETE FROM PS_SUPPLIER_PO_LINE;
+    DELETE FROM PS_SUPPLIER_PO;
     DELETE FROM PS_ORDER_LINE;
     DELETE FROM PS_ORDER;
     DELETE FROM PS_CART_LINE;
     DELETE FROM PS_CART;
+    DELETE FROM PS_CUSTOMER_ACCOUNT WHERE USERNAME NOT IN ('alice', 'aditya');
     UPDATE PS_PRODUCT
       SET STOCK = CASE ID ${cases} END,
           VERSION = 0

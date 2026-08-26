@@ -1,6 +1,7 @@
 package com.mongodb.modernization.petstore.shared.api;
 
 import com.mongodb.modernization.petstore.cart.domain.CartLineNotFoundException;
+import com.mongodb.modernization.petstore.accounts.application.AccountAlreadyExistsException;
 import com.mongodb.modernization.petstore.cart.domain.InvalidQuantityException;
 import com.mongodb.modernization.petstore.orders.application.DuplicateCheckoutException;
 import com.mongodb.modernization.petstore.orders.application.InsufficientStockException;
@@ -70,6 +71,11 @@ public class ApiExceptionHandler {
                 .addKeyValue("path", request.getRequestURI())
                 .addKeyValue("errorType", error.getClass().getSimpleName())
                 .log("Request rejected by a concurrency or inventory guard");
+        return problem(HttpStatus.CONFLICT, error.getMessage(), request);
+    }
+
+    @ExceptionHandler(AccountAlreadyExistsException.class)
+    ProblemDetail duplicateAccount(AccountAlreadyExistsException error, HttpServletRequest request) {
         return problem(HttpStatus.CONFLICT, error.getMessage(), request);
     }
 

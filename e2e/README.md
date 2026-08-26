@@ -7,9 +7,9 @@ This is the source-of-truth inventory for the automated test suite. The same Pla
 | Layer | MongoDB | Oracle | Command |
 |---|---:|---:|---|
 | Java unit + persistence integration | Yes | Yes | `./mvnw verify` |
-| API E2E only | 18 tests | 18 tests | `npm run e2e:api:mongo`, `npm run e2e:api:oracle` |
-| API + real-browser E2E | 22 tests | 22 tests | `npm run e2e:mongo`, `npm run e2e:oracle` |
-| Both API implementations | 36 executions | — | `npm run e2e:api:all` |
+| API E2E only | 21 tests | 21 tests | `npm run e2e:api:mongo`, `npm run e2e:api:oracle` |
+| API + real-browser E2E | 28 tests | 28 tests | `npm run e2e:mongo`, `npm run e2e:oracle` |
+| Both API implementations | 42 executions | — | `npm run e2e:api:all` |
 
 Install prerequisites once:
 
@@ -26,16 +26,19 @@ npm run e2e:mongo
 npm run e2e:oracle
 ```
 
-`./mvnw verify` currently executes 20 JUnit tests: twelve unit/service/telemetry tests plus the four-test persistence contract against each database. The two full Playwright runs execute 44 tests. Together, the matrix is 64 test executions across 38 unique specifications.
+`./mvnw verify` currently executes 39 JUnit tests: nineteen unit/service/telemetry tests plus the ten-test persistence contract against each database. The two full Playwright runs execute 56 tests. Together, the matrix is 95 test executions across 57 unique specifications.
 
 Latest local verification (August 26, 2026):
 
 | Command | Result |
 |---|---:|
-| `./mvnw verify` | 20 passed, 0 failed, 0 skipped |
-| `npm run e2e:mongo` | 22 passed, 0 failed |
-| `npm run e2e:oracle` | 22 passed, 0 failed |
-| Live admin health and log endpoints on ports 8080 and 8081 | HTTP 200 on both |
+| Java unit/service tests | 19 passed, 0 failed |
+| MongoDB ten-scenario persistence contract | 10 passed, 0 failed |
+| Oracle ten-scenario persistence contract | 10 passed, 0 failed |
+| MongoDB API + Chromium E2E | 28 passed, 0 failed |
+| Oracle API + Chromium E2E | 28 passed, 0 failed |
+| Live MongoDB service on port 8080 | Healthy; approval page/API and telemetry API all HTTP 200 |
+| Live Oracle service on port 8081 | Healthy; approval page/API and telemetry API all HTTP 200 |
 
 ## Isolation and inventory guarantee
 
@@ -43,7 +46,7 @@ The E2E runner creates only `petstore-e2e-mongo` or `petstore-e2e-oracle`, using
 
 Before and after every API or browser test, the fixture:
 
-1. Deletes all carts, orders, and order lines from the disposable database.
+1. Deletes all carts, customer orders, supplier purchase orders, line snapshots, and non-demo customer accounts from the disposable database.
 2. Restores all seven product stock values and their versions to zero.
 3. Calls the public catalog API and asserts every stock/version value.
 4. Repeats the reset and assertion in a `finally` block even when the test fails.
@@ -87,8 +90,11 @@ Every row below runs against both MongoDB and Oracle. The link points to the exe
 | 16 | [Two-customer last-inventory race](./api-contract.spec.js#L509) | Alice and Aditya each request all four Bulldogs and checkout concurrently; exactly one receives 201 and one 409; stock ends at zero, never negative; exactly one order exists; winner's cart clears while loser's cart remains. |
 | 17 | [Concurrent same-key idempotency race](./api-contract.spec.js#L533) | Two sessions checkout the same cart with one key concurrently; both receive 201 with the same order ID; only one order is stored; stock and inventory version change exactly once. |
 | 18 | [Customer-scoped idempotency and history](./api-contract.spec.js#L554) | Alice and Aditya reuse the same idempotency key; distinct orders are created because uniqueness includes customer ID; each user sees only their own order; stock decrements twice. |
+| 19 | [Administrator approval lifecycle](./api-contract.spec.js) | Anonymous/customer access is rejected; a high-value checkout stays `PENDING` without a supplier PO; duplicate approvals converge on one version and one PO; an opposite decision conflicts; denial replay restores reserved stock exactly once and never creates a PO; CSRF remains mandatory. |
+| 20 | [Supplier authorization, inventory, and purchase-order processing](./api-contract.spec.js) | Anonymous/customer access is rejected; `supplier/supplier` receives only the supplier role; inventory PUT is replay-safe and rejects a stale competing value; checkout creates exactly one PO; two simultaneous processing requests both converge on one `PROCESSED` version; the customer order becomes `COMPLETED`; CSRF remains mandatory. |
+| 21 | [Customer account lifecycle](./api-contract.spec.js) | Invalid registration is rejected; a valid account is persisted without exposing its password hash; duplicates conflict; the new credentials authenticate; profile read/update persists address and preferences; CSRF remains mandatory. |
 
-All HTTP endpoints are exercised: `GET /api/v1/session`, `GET /api/v1/csrf`, all three catalog routes, `GET /api/v1/cart`, all three cart mutation routes, `GET/POST /api/v1/orders`, both `GET /api/v1/admin/logs` and `GET /api/v1/admin/health`, `/admin/health.html`, `/login`, and `/logout`.
+All HTTP endpoints are exercised: `GET /api/v1/session`, `GET /api/v1/csrf`, all three catalog routes, `GET /api/v1/cart`, all three cart mutation routes, `GET/POST /api/v1/orders`, supplier inventory and purchase-order routes, administrator order list/decision routes, `GET /api/v1/admin/logs`, `GET /api/v1/admin/health`, `/supplier/`, `/admin/orders.html`, `/admin/health.html`, `/login`, and `/logout`.
 
 Run one API scenario against one store, for example:
 
@@ -108,6 +114,9 @@ These tests use a real Chromium instance and the same before/after inventory fix
 | 2 | [Catalog search](./petstore.spec.js#L28) | Searching `iguana` filters seven cards to one Green Iguana without a server-side state mutation. |
 | 3 | [Additional customer login](./petstore.spec.js#L35) | Aditya signs in with the configured second demo account and the UI displays the correct identity. |
 | 4 | [Admin health dashboard](./petstore.spec.js#L44) | Anonymous navigation reaches login; `admin/admin` returns to the saved dashboard; UP status, five summary cards, three SVG graphs, live pool/query telemetry, optimizer plans, and the logs link render in real Chromium. |
+| 5 | [Administrator approval-queue journey](./petstore.spec.js) | A high-value checkout creates a pending order; anonymous navigation resumes after `admin/admin` login; the live summary and order card render; approving removes it from pending, adds it to history, and confirms supplier release. |
+| 6 | [Supplier portal journey](./petstore.spec.js) | A storefront checkout creates a PO; anonymous portal navigation resumes after `supplier/supplier` login; seven inventory rows render; an inventory update persists; the PO is visible and can be processed to `PROCESSED`. |
+| 7 | [Customer account browser journey](./petstore.spec.js) | A visitor registers through the UI, signs in with the new credentials, sees the persisted profile, updates it, reloads, and sees the update retained. |
 
 ## Java unit and service coverage
 
@@ -117,8 +126,11 @@ These tests use a real Chromium instance and the same before/after inventory fix
 | [Cart rejects boundary violations](../src/test/java/com/mongodb/modernization/petstore/cart/domain/CartTest.java#L23) | Quantities 0 and 100 are rejected. |
 | [Cart prevents accumulated overflow](../src/test/java/com/mongodb/modernization/petstore/cart/domain/CartTest.java#L31) | Adding one to an existing quantity of 99 is rejected. |
 | [Cart requires an existing line](../src/test/java/com/mongodb/modernization/petstore/cart/domain/CartTest.java#L37) | Update and remove of a missing product both throw the domain not-found exception. |
-| [Service short-circuits idempotent retries](../src/test/java/com/mongodb/modernization/petstore/shared/application/StorefrontServiceTest.java#L18) | An existing order is returned without invoking checkout again. |
-| [Security creates encoded, role-separated users](../src/test/java/com/mongodb/modernization/petstore/config/SecurityConfigTest.java#L10) | Both customer passwords and admin password match their BCrypt hashes; Aditya has only `CUSTOMER`; admin has only `ADMIN`. |
+| [Service short-circuits idempotent retries and repairs hand-off](../src/test/java/com/mongodb/modernization/petstore/shared/application/StorefrontServiceTest.java) | An existing order is returned without invoking checkout again, while its supplier PO hand-off is safely retried. |
+| [Strict administrator approval threshold](../src/test/java/com/mongodb/modernization/petstore/orders/domain/OrderTest.java) | `$499.99` auto-approves while exactly `$500.00` and higher remain pending, matching the legacy strict comparison. |
+| [Administrator decision orchestration](../src/test/java/com/mongodb/modernization/petstore/orders/application/AdminOrderServiceTest.java) | Approval triggers the idempotent supplier handoff; denial does not. |
+| [Security creates encoded, role-separated users](../src/test/java/com/mongodb/modernization/petstore/config/SecurityConfigTest.java#L10) | Customer, administrator, and supplier passwords match their BCrypt hashes and each principal has only its intended role. |
+| [Supplier PO snapshot and idempotent transition](../src/test/java/com/mongodb/modernization/petstore/supplier/domain/SupplierPurchaseOrderTest.java) | An immutable PO snapshots the customer order; `READY` becomes `PROCESSED`; repeating the domain transition has no effect. |
 | [HTTP telemetry classification and self-exclusion](../src/test/java/com/mongodb/modernization/petstore/observability/RequestTelemetryTest.java#L18) | 2xx/4xx/5xx counts, rates, average/max latency, and 60 buckets are exact; dashboard polls and Actuator probes do not inflate their own graphs. |
 | [HTTP telemetry rolling expiry](../src/test/java/com/mongodb/modernization/petstore/observability/RequestTelemetryTest.java#L41) | The oldest bucket expires at 60 minutes while lifetime counts remain. |
 | [Concurrent HTTP telemetry](../src/test/java/com/mongodb/modernization/petstore/observability/RequestTelemetryTest.java#L56) | Eight threads record 16,000 requests without lost updates. |
@@ -136,6 +148,12 @@ Each test below runs once through `MongoStorefrontStore` and once through `Oracl
 | [Atomic and idempotent checkout](../src/test/java/com/mongodb/modernization/petstore/persistence/StorefrontStoreContract.java#L41) | Same customer/key returns one order; cart clears; order history contains exactly that order. |
 | [Simultaneous cart writes](../src/test/java/com/mongodb/modernization/petstore/persistence/StorefrontStoreContract.java#L54) | Two threads update the same version behind a latch; exactly one succeeds and one conflicts. |
 | [Simultaneous buyers](../src/test/java/com/mongodb/modernization/petstore/persistence/StorefrontStoreContract.java#L78) | Two threads attempt to buy all remaining stock; one order is placed, one receives insufficient stock, and final stock is exactly zero. |
+| [Replay-safe supplier inventory](../src/test/java/com/mongodb/modernization/petstore/persistence/StorefrontStoreContract.java) | Absolute inventory replacement advances the optimistic version once; an identical retry succeeds without another write; a stale competing value receives a conflict. |
+| [Idempotent supplier PO lifecycle](../src/test/java/com/mongodb/modernization/petstore/persistence/StorefrontStoreContract.java) | One customer order maps to one supplier PO; create and process replays return the same records; the customer order becomes `COMPLETED`. |
+| [Concurrent supplier processing](../src/test/java/com/mongodb/modernization/petstore/persistence/StorefrontStoreContract.java) | Two threads process one READY version; both converge on the same stored `PROCESSED` result and no replay advances the version. |
+| [Concurrent same-key checkout replay](../src/test/java/com/mongodb/modernization/petstore/persistence/StorefrontStoreContract.java) | Two threads submit the same customer cart and idempotency key; both return the same order, stock decrements once, and exactly one order is stored. Oracle serializes this boundary with a per-cart row lock and re-checks the key after acquiring it. |
+| [Replay-safe approval and denial](../src/test/java/com/mongodb/modernization/petstore/persistence/StorefrontStoreContract.java) | High-value checkout creates no PO until approval; approval replay creates one PO; denial replay restores stock once; reversing a committed decision conflicts. |
+| [Concurrent approve-versus-deny race](../src/test/java/com/mongodb/modernization/petstore/persistence/StorefrontStoreContract.java) | Two opposite decisions start behind one latch; exactly one commits, one conflicts, and final inventory/PO state matches the winning decision. |
 
 ## Failure artifacts and diagnostics
 
@@ -144,5 +162,7 @@ Each test below runs once through `MongoStorefrontStore` and once through `Oracl
 - CI uploads separate `playwright-report-mongo`, `playwright-report-oracle`, and `java-test-reports` artifacts.
 - Send a known `X-Request-ID` and query `GET /api/v1/admin/logs?requestId=...` with `admin/admin` when diagnosing an HTTP failure.
 - Open `/admin/health.html` with `admin/admin` to correlate HTTP errors, pool pressure, retries, operation latency, and optimizer scan choices.
+- The supplier flow diagrams, guarantees, and manual walkthrough are in [feature-supplier-portal.md](../docs/feature-supplier-portal.md).
+- The administrator approval state machine, race guarantees, observability, and manual walkthrough are in [feature-admin-order-approval.md](../docs/feature-admin-order-approval.md).
 
 The E2E suites use one worker because the reset fixture owns one disposable database. Concurrency is created deliberately inside the race tests with simultaneous requests/threads, so serial test scheduling does not reduce race-condition coverage.

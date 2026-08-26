@@ -2,8 +2,8 @@
 
 ## Executive summary
 
-This project preserves the familiar catalog, cart, checkout, and order-history
-experience of the Oracle Java Pet Store while replacing its classic J2EE-era
+This project preserves the familiar catalog, cart, checkout, order-history,
+customer-account, administrator-approval, and supplier-fulfilment experience of the Oracle Java Pet Store while replacing its classic J2EE-era
 application style with a Java 21, Spring Boot 4 modular monolith. The result is
 easier to run, test, observe, and evolve, without turning a small domain into a
 distributed system.
@@ -17,8 +17,7 @@ API and operations dashboard.
 
 This comparison was checked against the supplied PetStore 1.3.2 source tree at
 `/Users/adkunwar/Downloads/petstore1.3.2`. The modernization in this repository
-covers the customer storefront—catalog, cart, checkout, and order history—not
-every application in the original distribution.
+covers the customer storefront, customer account lifecycle, high-value order approval, supplier inventory, and supplier purchase-order processing. Remaining legacy applications and integrations are called out explicitly rather than presented as complete.
 
 The source confirms a J2EE 1.3 architecture: four EAR applications
 (storefront, administrator, OPC, and supplier); a storefront EAR containing
@@ -40,14 +39,14 @@ Relevant legacy sources include:
 | Concern | Traditional Java Pet Store / J2EE baseline | Modernized implementation | Why this is better |
 |---|---|---|---|
 | Runtime | J2EE SDK 1.3.1 runtime with vendor-specific J2EE RI descriptors. | Self-contained Spring Boot 4.1 application on Java 21. | Faster startup, one executable deployment unit, and fewer server-specific moving parts. |
-| Application structure | Four EARs, WAF, EJBs, and shared component modules. | A scoped modular monolith organized by catalog, cart, orders, shared application services, and persistence adapters. | The customer storefront is easier to navigate without implying that legacy back-office workflows are already migrated. |
+| Application structure | Four EARs, WAF, EJBs, and shared component modules. | A modular monolith organized by accounts, catalog, cart, orders, supplier, observability, and persistence adapters. | Related workflows remain easy to navigate and transact without recreating distributed-system complexity. |
 | HTTP interface | WAF `MainServlet`, web controllers, JSP/template views, and EJB facades. | Versioned JSON APIs under `/api/v1`, plus a same-origin static web UI. | Clearer client contract, browser-friendly integration, and simpler automated testing. |
 | Configuration | XML descriptors and JNDI names configure EJBs, JDBC, JMS, and server mappings. | Typed, externalized Spring configuration and environment variables. | The same artifact runs locally, in CI, and in containers without source edits. |
 | Deployment | Ant 1.4.1 produces and verifies multiple EARs for a J2EE server; Cloudscape is part of setup. | Docker Compose starts the app and one selected database profile. | Reproducible local setup and isolated, disposable E2E environments. |
 | Persistence | CMP EJBs and JNDI JDBC data sources. | One `StorefrontStore` contract with Oracle/JPA and MongoDB adapters. | Oracle remains supported while the data-store choice can evolve independently. |
-| Reliability | Transaction behavior may be implicit in framework/container boundaries. | Explicit transactions, optimistic cart versions, conditional stock decrements, and idempotent checkout keys. | Prevents lost updates, overselling, and duplicate orders under concurrent requests. |
+| Reliability | Transaction behavior may be implicit in framework/container boundaries. | Explicit transactions, optimistic versions, conditional stock changes, idempotent checkout/PO/decision handling, and serialized approval races. | Prevents lost updates, overselling, duplicate orders, duplicate fulfilment, and double inventory restoration. |
 | Security | Legacy authentication patterns and broad server configuration. | Spring Security form login/basic auth, CSRF protection for mutations, role-separated customer/admin routes, and restrictive response headers/CSP. | Safer demo defaults and a clearer migration path to enterprise OIDC. |
-| Async integration | JMS queues/topics and message-driven beans connect storefront, OPC, supplier, and mailer flows. | Checkout is synchronous and transactional; these cross-application async flows are explicitly outside the current scope. | Avoids a premature messaging redesign while making the remaining boundary clear. |
+| Workflow integration | JMS queues/topics and message-driven beans connect storefront, OPC, supplier, and mailer flows. | Approval and supplier fulfilment are synchronous, transactional application workflows; external mailer and payment integrations remain outside the current scope. | Preserves visible business outcomes with simpler local consistency while leaving true external boundaries explicit. |
 | Observability | Logs and runtime state are often separate from the user workflow. | Correlation IDs, JSON logs, health probes, request/database telemetry, query diagnostics, and an admin dashboard. | Faster diagnosis without giving customers access to operational data. |
 | Quality gates | Manual verification is common for a sample application. | JUnit, integration tests, Playwright browser/API contracts, and GitHub Actions for both Oracle and MongoDB modes. | Regressions are caught consistently across both persistence implementations. |
 
@@ -70,7 +69,7 @@ one repeatable command, while CI uses the same application artifact.
 
 The code is grouped around the domain rather than around an application server:
 
-- `catalog`, `cart`, and `orders` contain their API and domain behavior.
+- `accounts`, `catalog`, `cart`, `orders`, and `supplier` contain their API and domain behavior.
 - `shared/application/StorefrontService` orchestrates business operations.
 - `StorefrontStore` is the persistence boundary.
 - `persistence/oracle` and `persistence/mongo` implement that boundary.
@@ -90,6 +89,8 @@ The modernization makes correctness rules explicit:
 - A unique `(customerId, idempotencyKey)` protects checkout retries from creating
   duplicate orders.
 - Order lines and shipping addresses are immutable purchase-time snapshots.
+- Orders below the configurable approval threshold are auto-approved; high-value orders wait in an admin queue.
+- Approval creates one supplier PO; denial atomically restores reserved stock exactly once.
 
 **Outcome:** concurrent customers cannot oversell inventory, overwrite another
 cart update, or accidentally place the same order twice.
@@ -111,7 +112,7 @@ diagnostics, while preserving an Oracle fallback.
 
 ### 5. Security and API hygiene
 
-- Customer and administrator roles are separate.
+- Customer, administrator, and supplier roles are separate.
 - Mutation endpoints require CSRF protection.
 - The admin-only health and log endpoints are not exposed to customer accounts.
 - Responses carry safe request/correlation IDs for support investigations.
@@ -154,6 +155,17 @@ surface instead of a raw JSON payload or log-file hunt.
 contract, reducing the chance that a database migration quietly changes user
 outcomes.
 
+### 8. Legacy account and back-office workflows in a browser
+
+- Customer registration/profile persists contact details, default address, language/category, and display preferences using BCrypt password hashes; raw payment-card storage was intentionally not reproduced.
+- `/admin/orders.html` replaces the Java Web Start approval client with a responsive pending queue, audit history, and replay-safe approve/deny commands.
+- `/supplier/` replaces the separate supplier EAR with role-protected inventory and purchase-order screens.
+- The original strict US policy is retained: totals below $500 auto-approve; totals at or above $500 require review.
+
+**Outcome:** the most visible account, approval, and supplier capabilities now run in the same deployable service while retaining role separation and transactional guarantees. Detailed approval diagrams and manual checks are in [feature-admin-order-approval.md](feature-admin-order-approval.md).
+
+The complete Oracle relational model, MongoDB document model, primary/foreign/logical keys, column dictionaries, and cross-store mapping are documented in [database-schema.md](database-schema.md).
+
 ## Measurable improvements
 
 | Improvement | Evidence in this implementation |
@@ -164,5 +176,3 @@ outcomes.
 | Lower migration risk | One business contract, Oracle and Mongo adapters, and E2E parity tests. |
 | Better security posture | Spring Security, CSRF, roles, CSP/headers, and restricted admin diagnostics. |
 | Stronger release confidence | Unit, integration, browser, and API tests run in CI for both data stores. |
-
-

@@ -8,4 +8,5 @@ import java.util.Optional;
 interface MongoOrderRepository extends MongoRepository<OrderDocument, String> {
     Optional<OrderDocument> findByCustomerIdAndIdempotencyKey(String customerId, String idempotencyKey);
     List<OrderDocument> findByCustomerIdOrderByCreatedAtDesc(String customerId);
+    List<OrderDocument> findAllByOrderByCreatedAtDesc();
 }

@@ -14,4 +14,8 @@ interface JpaProductRepository extends JpaRepository<ProductJpaEntity, String> {
     @Query("update ProductJpaEntity p set p.stock = p.stock - :quantity, p.version = p.version + 1 " +
             "where p.id = :id and p.stock >= :quantity")
     int decrementStock(@Param("id") String id, @Param("quantity") int quantity);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update ProductJpaEntity p set p.stock = p.stock + :quantity, p.version = p.version + 1 where p.id = :id")
+    int restoreStock(@Param("id") String id, @Param("quantity") int quantity);
 }

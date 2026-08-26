@@ -26,15 +26,20 @@ class OrderDocument {
     AddressDocument shippingAddress;
     ArrayList<OrderLineDocument> lines = new ArrayList<>();
     @Field(targetType = FieldType.DECIMAL128) BigDecimal total;
+    Long version;
+    Instant reviewedAt;
+    String reviewedBy;
 
     OrderDocument() {}
     OrderDocument(Order order) {
         id = order.id(); customerId = order.customerId(); idempotencyKey = order.idempotencyKey();
         createdAt = order.createdAt(); status = order.status(); shippingAddress = new AddressDocument(order.shippingAddress());
         order.lines().stream().map(OrderLineDocument::new).forEach(lines::add); total = order.total();
+        version = order.version(); reviewedAt = order.reviewedAt(); reviewedBy = order.reviewedBy();
     }
     Order toDomain() {
         return new Order(id, customerId, idempotencyKey, createdAt, status, shippingAddress.toDomain(),
-                lines.stream().map(OrderLineDocument::toDomain).toList(), total);
+                lines.stream().map(OrderLineDocument::toDomain).toList(), total,
+                version == null ? 0 : version, reviewedAt, reviewedBy);
     }
 }

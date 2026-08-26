@@ -30,4 +30,6 @@ class ProductJpaEntity {
     }
 
     Product toDomain() { return new Product(id, categoryId, categoryName, name, description, price, stock, version); }
+
+    void replaceStock(int quantity) { stock = quantity; }
 }

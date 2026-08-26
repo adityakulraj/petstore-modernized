@@ -3,6 +3,7 @@ package com.mongodb.modernization.petstore.persistence.mongo;
 import com.mongodb.modernization.petstore.cart.domain.Cart;
 import com.mongodb.modernization.petstore.catalog.domain.Product;
 import com.mongodb.modernization.petstore.catalog.application.SeedProducts;
+import com.mongodb.modernization.petstore.config.AppProperties;
 import com.mongodb.modernization.petstore.orders.application.DuplicateCheckoutException;
 import com.mongodb.modernization.petstore.orders.application.InsufficientStockException;
 import com.mongodb.modernization.petstore.orders.domain.Order;
@@ -26,6 +27,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -42,15 +44,17 @@ class MongoStorefrontStore implements StorefrontStore {
     private final MongoTemplate template;
     private final TransactionTemplate transactions;
     private final DatabaseExecutor database;
+    private final BigDecimal approvalThreshold;
     private final Clock clock = Clock.systemUTC();
 
     MongoStorefrontStore(MongoProductRepository products, MongoCartRepository carts,
                          MongoOrderRepository orders, MongoTemplate template,
                          @Qualifier("mongoTransactionManager") PlatformTransactionManager transactionManager,
-                         DatabaseExecutor database) {
+                         DatabaseExecutor database, AppProperties properties) {
         this.products = products; this.carts = carts; this.orders = orders; this.template = template;
         this.transactions = new TransactionTemplate(transactionManager);
         this.database = database;
+        this.approvalThreshold = properties.admin().approvalThreshold();
     }
 
     @Override public List<Product> products(String categoryId) {
@@ -127,7 +131,8 @@ class MongoStorefrontStore implements StorefrontStore {
             var result = template.updateFirst(query, new Update().inc("stock", -line.quantity()).inc("version", 1), ProductDocument.class);
             if (result.getModifiedCount() != 1) throw new InsufficientStockException(line.productId());
         }
-        var order = Order.placed(UUID.randomUUID().toString(), customerId, key, Instant.now(clock), address, cart);
+        var order = Order.submitted(UUID.randomUUID().toString(), customerId, key, Instant.now(clock), address,
+                cart, approvalThreshold);
         try {
             orders.insert(new OrderDocument(order));
             cartDocument.replaceWith(Cart.empty(cart.id(), customerId, cart.version()));

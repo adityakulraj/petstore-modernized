@@ -7,13 +7,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.querySelector('#category').addEventListener('change', renderProducts);
   document.querySelector('#close-checkout').addEventListener('click', () => document.querySelector('#checkout-dialog').close());
   document.querySelector('#checkout-form').addEventListener('submit', checkout);
+  document.querySelector('#account-form').addEventListener('submit', saveAccount);
   await Promise.all([loadCatalog(), loadSession()]);
   if (state.session?.authenticated) await loadCart();
 });
 
 async function api(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-  if (options.method && options.method !== 'GET') {
+  const publicRegistration = path === '/api/v1/accounts' && options.method === 'POST' && !state.session?.authenticated;
+  if (options.method && options.method !== 'GET' && !publicRegistration) {
     if (!state.csrf) state.csrf = await fetch('/api/v1/csrf').then(r => r.json());
     headers[state.csrf.headerName] = state.csrf.token;
   }
@@ -37,11 +39,12 @@ async function loadCatalog() {
 }
 async function loadSession() {
   state.session = await api('/api/v1/session').catch(() => ({ authenticated: false }));
-  const operations = state.session.admin ? ' · <a class="login-link" href="/admin/health.html">Health</a>' : '';
+  const operations = state.session.admin ? ' · <a class="login-link" href="/admin/orders.html">Approvals</a> · <a class="login-link" href="/admin/health.html">Health</a>' : '';
   document.querySelector('#session-actions').innerHTML = state.session.authenticated
-    ? `<span>Hi, ${escapeHtml(state.session.username)}</span>${operations} · <button id="sign-out" class="login-link nav-link">Sign out</button>`
-    : '<a class="login-link" href="/login">Sign in</a>';
+    ? `<span>Hi, ${escapeHtml(state.session.username)}</span> · <button id="open-account" class="login-link nav-link">Account</button>${operations} · <button id="sign-out" class="login-link nav-link">Sign out</button>`
+    : '<a class="login-link" href="/login">Sign in</a> · <button id="open-account" class="login-link nav-link">Create account</button>';
   document.querySelector('#sign-out')?.addEventListener('click', signOut);
+  document.querySelector('#open-account')?.addEventListener('click', () => show('account'));
 }
 async function signOut() {
   if (!state.csrf) state.csrf = await fetch('/api/v1/csrf').then(r => r.json());
@@ -98,7 +101,10 @@ async function checkout(event) {
   const submit = event.currentTarget.querySelector('[type=submit]'); submit.disabled = true;
   try {
     const order = await api('/api/v1/orders', { method:'POST', headers:{'Idempotency-Key':idempotencyKey}, body:JSON.stringify({ expectedCartVersion:state.cart.version, address }) });
-    document.querySelector('#checkout-dialog').close(); toast(`Order ${order.id.slice(0,8)} placed.`); await Promise.all([loadCatalog(), loadCart(), loadOrders()]); show('orders');
+    const message = order.status === 'PENDING'
+      ? `Order ${order.id.slice(0,8)} placed and is awaiting administrator approval.`
+      : `Order ${order.id.slice(0,8)} placed. Supplier fulfilment started.`;
+    document.querySelector('#checkout-dialog').close(); toast(message); await Promise.all([loadCatalog(), loadCart(), loadOrders()]); show('orders');
   } catch (error) { await recoverCart(error); } finally { submit.disabled = false; }
 }
 async function loadOrders() {
@@ -107,11 +113,56 @@ async function loadOrders() {
   document.querySelector('#orders-panel').innerHTML = orders.map(order => `<article class="order-card"><div><span class="eyebrow">${new Date(order.createdAt).toLocaleString()}</span><h3>Order ${escapeHtml(order.id.slice(0,8))}</h3></div><strong>${money(order.total)} · ${escapeHtml(order.status)}</strong>
     <div class="order-lines">${order.lines.map(line => `${escapeHtml(line.productName)} × ${line.quantity}`).join(' · ')}</div></article>`).join('') || '<p class="empty">No orders yet.</p>';
 }
+async function loadAccount() {
+  const form = document.querySelector('#account-form');
+  const signedIn = state.session?.authenticated;
+  document.querySelector('#account-title').textContent = signedIn ? 'Your account' : 'Create account';
+  document.querySelector('#account-submit').textContent = signedIn ? 'Save profile' : 'Create account';
+  document.querySelector('#username-field').classList.toggle('hidden', signedIn);
+  document.querySelector('#password-field').classList.toggle('hidden', signedIn);
+  form.elements.password.required = !signedIn;
+  if (!signedIn) { form.reset(); return; }
+  const account = await api('/api/v1/accounts/me');
+  for (const [name, value] of Object.entries({...account, ...account.address})) {
+    if (form.elements[name] && form.elements[name].type !== 'checkbox') form.elements[name].value = value ?? '';
+  }
+  form.elements.myListPreference.checked = account.myListPreference;
+  form.elements.bannerPreference.checked = account.bannerPreference;
+}
+async function saveAccount(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const fields = Object.fromEntries(new FormData(form));
+  const body = {
+    username: fields.username,
+    password: fields.password,
+    fullName: fields.fullName,
+    email: fields.email,
+    phone: fields.phone,
+    preferredLanguage: fields.preferredLanguage,
+    favoriteCategory: fields.favoriteCategory,
+    myListPreference: form.elements.myListPreference.checked,
+    bannerPreference: form.elements.bannerPreference.checked,
+    address: { fullName: fields.fullName, line1: fields.line1, line2: fields.line2, city: fields.city,
+      state: fields.state, postalCode: fields.postalCode, country: fields.country }
+  };
+  try {
+    if (state.session?.authenticated) {
+      delete body.username;
+      delete body.password;
+    }
+    const account = await api(state.session?.authenticated ? '/api/v1/accounts/me' : '/api/v1/accounts',
+      { method: state.session?.authenticated ? 'PUT' : 'POST', body: JSON.stringify(body) });
+    if (!state.session?.authenticated) { toast(`Account ${account.username} created. Please sign in.`); location.href = '/login'; return; }
+    toast('Account updated.');
+  } catch (error) { toast(error.message, true); }
+}
 async function show(view) {
   if ((view === 'cart' || view === 'orders') && !state.session?.authenticated) { location.href='/login'; return; }
   document.querySelectorAll('.view').forEach(section => section.classList.toggle('hidden', section.id !== view));
   if (view === 'cart') await loadCart().catch(error => toast(error.message,true));
   if (view === 'orders') await loadOrders().catch(error => toast(error.message,true));
+  if (view === 'account') await loadAccount().catch(error => toast(error.message,true));
   document.querySelector(`#${view}`)?.scrollIntoView({ behavior:'smooth', block:'start' });
 }
 function toast(message, error=false) { const el=document.querySelector('#toast'); el.textContent=message; el.className=error?'show error':'show'; setTimeout(()=>el.className='',3500); }

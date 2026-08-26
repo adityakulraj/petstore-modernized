@@ -19,6 +19,10 @@ app:
   admin:
     username: ${ADMIN_USERNAME:admin}
     password: ${ADMIN_PASSWORD:admin}
+    approval-threshold: ${ORDER_APPROVAL_THRESHOLD:500.00}
+  supplier:
+    username: ${SUPPLIER_USERNAME:supplier}
+    password: ${SUPPLIER_PASSWORD:supplier}
   database:
     pool:
       min-size: ${DB_POOL_MIN_SIZE:1}

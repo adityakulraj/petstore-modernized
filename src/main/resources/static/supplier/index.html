@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="PetStore supplier operations portal">
+    <title>PetStore Supplier Portal</title>
+    <link rel="stylesheet" href="/assets/app.css">
+    <link rel="stylesheet" href="/assets/supplier.css">
+</head>
+<body class="supplier-page">
+<header class="topbar">
+    <a class="brand" href="/supplier/"><span>Pet</span>Store Supplier</a>
+    <nav aria-label="Supplier navigation">
+        <button class="nav-link" data-view="inventory">Inventory</button>
+        <button class="nav-link" data-view="purchase-orders">Purchase orders</button>
+    </nav>
+    <div id="session-actions"></div>
+</header>
+
+<main class="supplier-main">
+    <section class="supplier-hero">
+        <div><p class="eyebrow">FULFILMENT OPERATIONS</p><h1>Supplier portal</h1>
+            <p>Keep availability current and process reserved customer orders safely.</p></div>
+        <div class="store-pill"><span id="store-name">…</span> data store</div>
+    </section>
+
+    <section id="inventory" class="view content-section supplier-section">
+        <div class="section-heading"><div><p class="eyebrow">LIVE AVAILABILITY</p><h2>Inventory</h2></div>
+            <button class="secondary" id="refresh-inventory">Refresh</button></div>
+        <div class="table-shell"><table><thead><tr><th>Item</th><th>Category</th><th>Version</th><th>Available</th><th></th></tr></thead>
+            <tbody id="inventory-body"></tbody></table></div>
+    </section>
+
+    <section id="purchase-orders" class="view content-section supplier-section hidden">
+        <div class="section-heading"><div><p class="eyebrow">RESERVED ORDERS</p><h2>Purchase orders</h2></div>
+            <button class="secondary" id="refresh-orders">Refresh</button></div>
+        <div id="purchase-order-list" class="purchase-order-list" aria-live="polite"></div>
+    </section>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="/assets/supplier.js" defer></script>
+</body>
+</html>
