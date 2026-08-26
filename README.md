@@ -7,25 +7,25 @@ APP_STORE=oracle  # JPA + Oracle transactions and @Version
 APP_STORE=mongo   # MongoDB documents, transactions, and @Version
 ```
 
-The application uses Spring Boot 4.1.x, a modular-monolith package structure, same-origin storefront, administrator, and supplier UIs, externalized configuration, health probes, idempotent checkout and supplier hand-off, conditional inventory updates, optimistic concurrency, and persisted customer accounts.
+The application uses Spring Boot 4.1.x, a modular-monolith package structure, same-origin storefront, administrator, and supplier UIs, externalized configuration, health probes, idempotent checkout and supplier hand-off, atomic backorders/replenishment, conditional inventory updates, optimistic concurrency, persisted customer accounts, and a transactional customer-notification outbox.
 
 ## Fastest run: Docker Compose
 
 Prerequisites: Docker Desktop with at least 6 GB available memory. Oracle needs more startup time and memory than MongoDB.
 
-MongoDB mode:
+MongoDB mode on port 8080:
 
 ```bash
-docker compose --profile mongo up --build
+APP_PORT=8080 docker compose -p petstore-observability --profile mongo up --build -d mongo app-mongo
 ```
 
-Oracle mode:
+Oracle mode on port 8081 (it can run beside MongoDB):
 
 ```bash
-docker compose --profile oracle up --build
+APP_PORT=8081 docker compose -p petstore-observability --profile oracle up --build -d oracle app-oracle
 ```
 
-Open [http://localhost:8080](http://localhost:8080). The local accounts are:
+Open [MongoDB on port 8080](http://localhost:8080) or [Oracle on port 8081](http://localhost:8081). The local accounts are:
 
 | Purpose | Username | Password |
 |---|---|---|
@@ -36,14 +36,18 @@ Open [http://localhost:8080](http://localhost:8080). The local accounts are:
 
 These are demo-only defaults. Override every password outside local development.
 
-Stop the selected stack without deleting its database volume:
+Stop and restart without deleting local data:
 
 ```bash
-docker compose --profile mongo down
-docker compose --profile oracle down
+docker compose -p petstore-observability --profile mongo stop app-mongo mongo
+docker compose -p petstore-observability --profile oracle stop app-oracle oracle
+docker compose -p petstore-observability --profile mongo start mongo app-mongo
+docker compose -p petstore-observability --profile oracle start oracle app-oracle
 ```
 
-The two app services intentionally share port 8080; run one profile at a time. Switching `APP_STORE` activates the matching Spring profile and excludes the unused database auto-configuration, so the application never needs both databases online or multiple PetStore app ports.
+Each application container activates exactly one store profile and excludes the unused database auto-configuration. The local comparison deployment publishes MongoDB at `8080` and Oracle at `8081`; each database remains a separate container from its application.
+
+The pinned ARM-native Oracle 23.9 faststart image avoids an Oracle 26ai PMON regression on the current Apple Silicon Docker runtime. Here Oracle data lives in the database container writable layer: `stop/start` retains it, while `down`, removal, or recreation resets it. Use managed Oracle or a compatible Linux volume host for durable non-demo deployments.
 
 ## Customer accounts
 
@@ -65,22 +69,45 @@ log events with request and correlation IDs. Their `account.by_username` and
 `account.save` database operations also appear in the protected operations
 dashboard telemetry.
 
+## MyList, recommendations, and item variants
+
+Signed-in customers can save independently stocked item variants to **MyList**. The Bulldog product now exposes the legacy-style **Male Adult** and **Female Puppy** items while preserving each SKU as the cart, inventory, order, and supplier key. Recommendations prioritize sibling variants and then the customer's configured favourite category. Favourite add/remove requests are CSRF-protected, customer-isolated, and replay-safe in both databases. See the [design, diagrams, reliability rules, and manual walkthrough](docs/feature-mylist-and-item-variants.md).
+
 ## Administrator order approvals
 
 Open [http://localhost:8080/admin/orders.html](http://localhost:8080/admin/orders.html) and sign in with `admin` / `admin`. Orders below the configurable `$500.00` threshold are automatically approved. Orders at or above the threshold remain `PENDING` until an administrator approves or denies them. Approval creates exactly one supplier PO; denial restores reserved inventory exactly once.
 
 Decisions are versioned, CSRF-protected, and replay-safe. Two opposite decisions have one winner and one HTTP 409 conflict, while duplicate same-decision requests converge on the committed result. Decision logs and database timings appear in the existing operations dashboard. See [the state machine, concurrency diagrams, and manual walkthrough](docs/feature-admin-order-approval.md).
 
+## Administrator sales and revenue analytics
+
+Open [http://localhost:8080/admin/sales.html](http://localhost:8080/admin/sales.html) with `admin` / `admin`. The dashboard provides date and category filters, recognized-revenue/order/unit/AOV cards, pending pipeline, a daily SVG trend, order-status mix, category performance, and category-to-item/SKU drilldown. Approved and completed orders count as recognized revenue; pending value is shown separately, while denied/backordered orders remain visible without inflating sales. The same API and UI run against Oracle on port 8081. See [the legacy evidence, calculation rules, diagrams, API, and walkthrough](docs/feature-sales-revenue-analytics.md).
+
+## Administrator catalog and price management
+
+Open [MongoDB catalog management](http://localhost:8080/admin/catalog.html) or [Oracle catalog management](http://localhost:8081/admin/catalog.html) as `admin` / `admin`. Administrators can create item/SKU variants, edit metadata and prices, publish/archive listings, and inspect a durable audit trail. New items start with stock `0`; suppliers alone change inventory. Shared versions prevent catalog and supplier updates from overwriting one another, and cart/order price snapshots preserve historical quotes. See [the design, concurrency diagrams, APIs, and walkthrough](docs/feature-catalog-price-management.md).
+
 ## Supplier portal
 
 Open [http://localhost:8080/supplier/](http://localhost:8080/supplier/) and sign in with `supplier` / `supplier`.
-The supplier can view and replace absolute inventory quantities, view purchase orders created by customer
-checkout, and process each purchase order. Inventory PUT retries are idempotent, stale competing versions receive
-HTTP 409, one customer order creates one durable supplier PO, and concurrent process retries converge on one
-`PROCESSED` result. The matching customer order becomes `COMPLETED` in the same database transaction.
+The supplier can view and replace absolute inventory quantities, see orders waiting for stock, view purchase orders,
+and process each purchase order. Inventory PUT retries use a durable `Idempotency-Key`; stale competing versions
+receive HTTP 409. Replenishment checks backorders oldest first and releases an order only when every line is
+available. One approved customer order creates one durable supplier PO, concurrent process retries converge on one
+`PROCESSED` result, and the matching customer order becomes `COMPLETED` in the same database transaction.
 
 The supplier flow, reliability decisions, diagrams, and manual walkthrough are documented in
 [docs/feature-supplier-portal.md](docs/feature-supplier-portal.md).
+The backorder state machine, race guarantees, and customer-to-supplier walkthrough are in
+[docs/feature-backorder-replenishment.md](docs/feature-backorder-replenishment.md).
+
+## Customer order inbox and timeline
+
+Signed-in customers have an **Inbox** with an unread badge and a durable timeline under each order. Checkout,
+administrator approval/denial, and supplier completion insert their event in the same database transaction as
+the order transition. Deterministic order/type IDs deduplicate replays; a scheduled dispatcher records delivery
+attempts and uses exponential backoff capped at five minutes. See the
+[outbox design, diagrams, and manual walkthrough](docs/feature-customer-notifications.md).
 
 ## Run the application outside Docker
 
@@ -140,7 +167,7 @@ Both implementations use bounded connection pools. Oracle uses HikariCP; one Mon
 
 Transient failures use a maximum of five attempts with capped exponential equal jitter (25 ms initial, 500 ms cap). The half-cap delay floor prevents a burst of immediate retries from exhausting the budget while a competing transaction is still committing. Retries are limited to reads and transactionally idempotent checkout, supplier, and administrator-decision operations. Cart mutations are observed but never blindly replayed after an ambiguous commit, because doing so could apply a non-idempotent quantity change twice. MongoDB driver `retryReads` and `retryWrites` also remain enabled.
 
-Indexes match the real query shapes in both stores: product category; customer + idempotency key (unique); customer + descending creation time; Oracle cart-line customer and order-line order joins; plus each store's primary-key indexes. The category API now pushes category filtering into the selected database so its index is actually used. The unconstrained seven-row catalog query intentionally remains a full scan; arbitrary substring search preserves legacy behavior and is filtered after that small result set rather than pretending a B-tree index can accelerate contains-anywhere matching.
+Indexes match the real query shapes in both stores: product category and product group; customer + item for MyList (unique); customer + idempotency key (unique); customer + descending creation time; Oracle cart-line customer and order-line order joins; plus each store's primary-key indexes. The category API now pushes category filtering into the selected database so its index is actually used. The unconstrained eight-item catalog query intentionally remains a full scan; arbitrary substring search preserves legacy behavior and is filtered after that small result set rather than pretending a B-tree index can accelerate contains-anywhere matching.
 
 ## Run the isolated E2E suites
 
@@ -158,9 +185,9 @@ npm run e2e:api:oracle
 npm run e2e:api:all
 ```
 
-The runner builds and starts a disposable Compose project on non-default ports, executes tests serially, resets carts/customer orders/supplier purchase orders/inventory before and after every test, verifies all seven product stock/version values after each reset, and deletes only the disposable test volumes. It refuses to reset a project whose name does not start with `petstore-e2e-`, so your normal local database is not a valid reset target.
+The runner builds and starts a disposable Compose project on non-default ports, executes tests serially, resets carts/MyList favourites/customer orders/customer notifications/supplier inventory commands/supplier purchase orders/inventory before and after every test, verifies all eight item/SKU stock/version values after each reset, and deletes only the disposable test volumes. It refuses to reset a project whose name does not start with `petstore-e2e-`, so your normal local database is not a valid reset target.
 
-The API suite covers public catalog/session APIs, authentication and authorization for customer/admin/supplier roles, CSRF, customer registration/profile lifecycle, both demo accounts, cart CRUD and validation, order history, checkout rollback, out-of-stock behavior, stale versions, two-user inventory races, simultaneous cart updates, concurrent idempotency retries, administrator approval/denial races and inventory restoration, supplier inventory replacement, and concurrent supplier PO processing. Run API plus browser tests with:
+The API suite covers public catalog/session APIs, authentication and authorization for customer/admin/supplier roles, CSRF, customer registration/profile lifecycle, both demo accounts, cart CRUD and validation, order history, atomic backorder creation, stale versions, two-user inventory races, simultaneous cart updates, concurrent checkout and replenishment retries, administrator approval/denial races and inventory restoration, supplier inventory replacement, concurrent supplier PO processing, and the deduplicated customer-notification outbox lifecycle. Run API plus browser tests with:
 
 ```bash
 npx playwright install chromium
@@ -216,6 +243,7 @@ curl http://localhost:8080/actuator/health/readiness
 | `ADMIN_USERNAME` | `admin` | Local log-viewer username. |
 | `ADMIN_PASSWORD` | `admin` | Local log-viewer password; override outside a demo. |
 | `ORDER_APPROVAL_THRESHOLD` | `500.00` | Orders below this total auto-approve; orders at or above it require administrator review. |
+| `NOTIFICATION_POLL_INTERVAL` | `1s` | Delay between durable customer-notification outbox polls. |
 | `LOG_FILE` | `logs/petstore.log` | JSON log file read by the protected endpoint. |
 | `LOG_MAX_FILE_SIZE` | `10MB` | Maximum size before the local log rotates. |
 | `LOG_MAX_HISTORY` | `7` | Number of rotated local log files retained. |
@@ -223,13 +251,13 @@ curl http://localhost:8080/actuator/health/readiness
 
 ## Troubleshooting
 
-- **Port 8080 is already in use:** stop the other profile before switching stores. `docker compose --profile mongo down` and `docker compose --profile oracle down` retain data volumes.
+- **Port 8080 or 8081 is already in use:** inspect `docker ps`; the documented commands intentionally publish MongoDB at `8080` and Oracle at `8081`.
 - **MongoDB says transactions are unsupported:** use the Compose service or connect to a replica set. A standalone `mongod` cannot execute checkout transactions.
 - **Oracle is still starting:** the first boot may take several minutes. Check `docker compose --profile oracle ps` and `docker compose --profile oracle logs oracle`.
-- **Oracle exits on Apple Silicon:** if your shell globally forces `DOCKER_DEFAULT_PLATFORM=linux/amd64`, unset it or set it to `linux/arm64`. The E2E runner detects the Docker server architecture automatically.
-- **Oracle E2E exits while another Oracle is running:** the Docker VM is usually out of memory. Pause the normal container with `docker compose stop oracle`, run the suite, then use `docker compose start oracle`; the volume is retained.
+- **Oracle exits with PMON / ORA-00443:** use the pinned ARM-native `23.9-slim-faststart` image. Oracle 26ai `23.26.2` and x86 emulation both reproduce PMON failure on this Docker Desktop runtime.
+- **Oracle E2E exits while another Oracle is running:** the Docker VM is usually out of memory. Pause it with `docker compose -p petstore-observability --profile oracle stop app-oracle oracle`, run the suite, then start it again; do not use `down` for the local Oracle demo.
 - **Docker reports `x509: certificate signed by unknown authority`:** Docker's VM does not trust your network's certificate authority. Add the organization-approved root CA to Docker/Rancher Desktop and restart it; do not disable TLS verification.
-- **Reset demo data:** after confirming no needed local data remains, remove only this project's volumes with `docker compose --profile <oracle|mongo> down --volumes`, then start again.
+- **Reset demo data:** MongoDB uses its named volume; Oracle resets when its database container is removed/recreated. Confirm no needed data remains and target only the selected project/services.
 - **Dashboard asks for credentials:** use the operations account (`admin/admin` by default), not either customer account. Direct navigation returns to the dashboard after login.
 
 ## Concurrency and consistency contract
@@ -240,6 +268,9 @@ curl http://localhost:8080/actuator/health/readiness
 - `(customerId, idempotencyKey)` is unique. Repeating a successful checkout key returns the original order and cannot create a second order.
 - Order lines and shipping address are purchase-time snapshots, so later catalog/profile changes do not rewrite history.
 - High-value checkout reserves stock as `PENDING`; approval emits one supplier PO, while denial restores stock in the decision transaction. Decision replays are idempotent and opposite races have one winner.
+- If any checkout line is unavailable, the order becomes `BACKORDERED`, no line is reserved, and the cart clears atomically. Replenishment locks/checks the whole order and releases it through the normal approval policy exactly once.
+- Supplier inventory commands have durable idempotency records. A same-key/same-payload retry returns the original result; a different payload with that key conflicts instead of overwriting later stock changes.
+- Checkout/decision/completion notifications are inserted in the same transaction as their order transitions. Deterministic order/type keys deduplicate replays; delivery retries use bounded exponential backoff capped at five minutes.
 - The UI calculates nothing authoritative: quantities are validated and totals are recomputed from server-held prices.
 
 ## Navigation for the panel
@@ -249,6 +280,8 @@ curl http://localhost:8080/actuator/health/readiness
 | Shared persistence contract | `shared/application/StorefrontStore.java` |
 | Business orchestration | `shared/application/StorefrontService.java` |
 | Administrator approval orchestration | `orders/application/AdminOrderService.java`, `orders/application/AdminOrderStore.java` |
+| Customer inbox, timeline, and outbox delivery | `notifications/`, `static/assets/app.js` |
+| Backorders and replay-safe replenishment | `orders/domain/Order.java`, `persistence/*/*SupplierStore.java`, `static/assets/supplier.js` |
 | Cart rules | `cart/domain/Cart.java` |
 | Request validation | `cart/api/CartController.java`, `orders/api/OrderController.java` |
 | Oracle transactions | `persistence/oracle/OracleStorefrontStore.java` |

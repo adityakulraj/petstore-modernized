@@ -5,8 +5,9 @@ import com.mongodb.modernization.petstore.catalog.domain.Product;
 import com.mongodb.modernization.petstore.catalog.application.SeedProducts;
 import com.mongodb.modernization.petstore.config.AppProperties;
 import com.mongodb.modernization.petstore.orders.application.DuplicateCheckoutException;
-import com.mongodb.modernization.petstore.orders.application.InsufficientStockException;
 import com.mongodb.modernization.petstore.orders.domain.Order;
+import com.mongodb.modernization.petstore.notifications.application.CustomerNotificationStore;
+import com.mongodb.modernization.petstore.notifications.domain.CustomerNotification;
 import com.mongodb.modernization.petstore.observability.DatabaseExecutor;
 import com.mongodb.modernization.petstore.shared.application.NotFoundException;
 import com.mongodb.modernization.petstore.shared.application.StoreConflictException;
@@ -42,6 +43,7 @@ class MongoStorefrontStore implements StorefrontStore {
     private final MongoCartRepository carts;
     private final MongoOrderRepository orders;
     private final MongoTemplate template;
+    private final CustomerNotificationStore notifications;
     private final TransactionTemplate transactions;
     private final DatabaseExecutor database;
     private final BigDecimal approvalThreshold;
@@ -50,8 +52,10 @@ class MongoStorefrontStore implements StorefrontStore {
     MongoStorefrontStore(MongoProductRepository products, MongoCartRepository carts,
                          MongoOrderRepository orders, MongoTemplate template,
                          @Qualifier("mongoTransactionManager") PlatformTransactionManager transactionManager,
-                         DatabaseExecutor database, AppProperties properties) {
+                         DatabaseExecutor database, AppProperties properties,
+                         CustomerNotificationStore notifications) {
         this.products = products; this.carts = carts; this.orders = orders; this.template = template;
+        this.notifications = notifications;
         this.transactions = new TransactionTemplate(transactionManager);
         this.database = database;
         this.approvalThreshold = properties.admin().approvalThreshold();
@@ -62,11 +66,12 @@ class MongoStorefrontStore implements StorefrontStore {
         return database.execute(filtered ? "catalog.products.by_category" : "catalog.products.all", true,
                 () -> (filtered ? products.findByCategoryIdOrderByIdAsc(categoryId.trim().toUpperCase(Locale.ROOT))
                         : products.findAll()).stream()
-                .map(ProductDocument::toDomain).sorted(Comparator.comparing(Product::id)).toList());
+                .map(ProductDocument::toDomain).filter(Product::active)
+                .sorted(Comparator.comparing(Product::id)).toList());
     }
     @Override public Optional<Product> product(String productId) {
         return database.execute("catalog.product.by_id", true,
-                () -> products.findById(productId).map(ProductDocument::toDomain));
+                () -> products.findById(productId).map(ProductDocument::toDomain).filter(Product::active));
     }
 
     @Override
@@ -120,21 +125,35 @@ class MongoStorefrontStore implements StorefrontStore {
 
     private Order checkoutOnce(String customerId, long expectedCartVersion, String key, Address address) {
         var existing = orders.findByCustomerIdAndIdempotencyKey(customerId, key);
-        if (existing.isPresent()) return existing.get().toDomain();
+        if (existing.isPresent()) {
+            var replay = existing.get().toDomain();
+            enqueueCheckoutNotification(replay);
+            return replay;
+        }
         var cartDocument = carts.findById(customerId).orElseThrow(() -> new StoreConflictException("Cart is empty"));
         var cart = cartDocument.toDomain();
         requireVersion(cart.version(), expectedCartVersion);
         if (cart.lines().isEmpty()) throw new StoreConflictException("Cart is empty");
-        for (var line : cart.lines()) {
-            // The conditional update is the inventory compare-and-set; the surrounding transaction rolls all lines back.
-            var query = Query.query(Criteria.where("_id").is(line.productId()).and("stock").gte(line.quantity()));
-            var result = template.updateFirst(query, new Update().inc("stock", -line.quantity()).inc("version", 1), ProductDocument.class);
-            if (result.getModifiedCount() != 1) throw new InsufficientStockException(line.productId());
+        var inventoryAvailable = cart.lines().stream().allMatch(line -> products.findById(line.productId())
+                .map(product -> product.stock >= line.quantity()).orElse(false));
+        if (inventoryAvailable) {
+            for (var line : cart.lines()) {
+                // A competing transaction produces a write conflict and the retry re-evaluates availability.
+                var query = Query.query(Criteria.where("_id").is(line.productId()).and("stock").gte(line.quantity()));
+                var result = template.updateFirst(query,
+                        new Update().inc("stock", -line.quantity()).inc("version", 1), ProductDocument.class);
+                if (result.getModifiedCount() != 1) {
+                    throw new OptimisticLockingFailureException("Inventory changed during checkout");
+                }
+            }
         }
-        var order = Order.submitted(UUID.randomUUID().toString(), customerId, key, Instant.now(clock), address,
-                cart, approvalThreshold);
+        var now = Instant.now(clock);
+        var order = inventoryAvailable
+                ? Order.submitted(UUID.randomUUID().toString(), customerId, key, now, address, cart, approvalThreshold)
+                : Order.backordered(UUID.randomUUID().toString(), customerId, key, now, address, cart);
         try {
             orders.insert(new OrderDocument(order));
+            enqueueCheckoutNotification(order);
             cartDocument.replaceWith(Cart.empty(cart.id(), customerId, cart.version()));
             carts.save(cartDocument);
             return order;
@@ -143,6 +162,15 @@ class MongoStorefrontStore implements StorefrontStore {
         } catch (OptimisticLockingFailureException conflict) {
             throw new StoreConflictException("The cart changed during checkout; refresh and retry", conflict);
         }
+    }
+
+    private void enqueueCheckoutNotification(Order order) {
+        var type = switch (order.status()) {
+            case Order.BACKORDERED -> CustomerNotification.Type.ORDER_BACKORDERED;
+            case Order.PENDING -> CustomerNotification.Type.ORDER_PENDING;
+            default -> CustomerNotification.Type.ORDER_APPROVED;
+        };
+        notifications.enqueue(order, type, order.createdAt());
     }
 
     @Override public Optional<Order> orderByIdempotencyKey(String customerId, String key) {
@@ -155,7 +183,16 @@ class MongoStorefrontStore implements StorefrontStore {
     }
     @Override public void seedIfEmpty() {
         database.execute("catalog.seed", false, () -> {
-            if (products.count() == 0) products.saveAll(SeedProducts.all().stream().map(ProductDocument::new).toList());
+            for (var product : SeedProducts.all()) {
+                var update = new Update()
+                        .set("productGroupId", product.productGroupId()).set("variantName", product.variantName())
+                        .set("categoryId", product.categoryId()).set("categoryName", product.categoryName())
+                        .set("name", product.name()).set("description", product.description())
+                        .setOnInsert("price", product.price()).setOnInsert("stock", product.stock())
+                        .setOnInsert("active", true)
+                        .setOnInsert("version", 0L);
+                template.upsert(Query.query(Criteria.where("_id").is(product.id())), update, ProductDocument.class);
+            }
         });
     }
 

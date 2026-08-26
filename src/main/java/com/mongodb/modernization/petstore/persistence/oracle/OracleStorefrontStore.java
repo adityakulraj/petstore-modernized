@@ -5,8 +5,9 @@ import com.mongodb.modernization.petstore.catalog.domain.Product;
 import com.mongodb.modernization.petstore.catalog.application.SeedProducts;
 import com.mongodb.modernization.petstore.config.AppProperties;
 import com.mongodb.modernization.petstore.orders.application.DuplicateCheckoutException;
-import com.mongodb.modernization.petstore.orders.application.InsufficientStockException;
 import com.mongodb.modernization.petstore.orders.domain.Order;
+import com.mongodb.modernization.petstore.notifications.application.CustomerNotificationStore;
+import com.mongodb.modernization.petstore.notifications.domain.CustomerNotification;
 import com.mongodb.modernization.petstore.observability.DatabaseExecutor;
 import com.mongodb.modernization.petstore.shared.application.NotFoundException;
 import com.mongodb.modernization.petstore.shared.application.StoreConflictException;
@@ -37,15 +38,17 @@ class OracleStorefrontStore implements StorefrontStore {
     private final JpaCartRepository carts;
     private final JpaOrderRepository orders;
     private final TransactionTemplate transactions;
+    private final CustomerNotificationStore notifications;
     private final DatabaseExecutor database;
     private final BigDecimal approvalThreshold;
     private final Clock clock = Clock.systemUTC();
 
     OracleStorefrontStore(JpaProductRepository products, JpaCartRepository carts, JpaOrderRepository orders,
                           PlatformTransactionManager transactionManager, DatabaseExecutor database,
-                          AppProperties properties) {
+                          AppProperties properties, CustomerNotificationStore notifications) {
         this.products = products; this.carts = carts; this.orders = orders;
         this.transactions = new TransactionTemplate(transactionManager);
+        this.notifications = notifications;
         this.database = database;
         this.approvalThreshold = properties.admin().approvalThreshold();
     }
@@ -56,13 +59,14 @@ class OracleStorefrontStore implements StorefrontStore {
         return database.execute(filtered ? "catalog.products.by_category" : "catalog.products.all", true,
                 () -> (filtered ? products.findByCategoryIdOrderByIdAsc(categoryId.trim().toUpperCase(Locale.ROOT))
                         : products.findAll()).stream()
-                .map(ProductJpaEntity::toDomain).sorted(Comparator.comparing(Product::id)).toList());
+                .map(ProductJpaEntity::toDomain).filter(Product::active)
+                .sorted(Comparator.comparing(Product::id)).toList());
     }
 
     @Override
     public Optional<Product> product(String productId) {
         return database.execute("catalog.product.by_id", true,
-                () -> products.findById(productId).map(ProductJpaEntity::toDomain));
+                () -> products.findById(productId).map(ProductJpaEntity::toDomain).filter(Product::active));
     }
 
     @Override
@@ -116,30 +120,55 @@ class OracleStorefrontStore implements StorefrontStore {
         var cartEntity = carts.findByIdForCheckout(customerId)
                 .orElseThrow(() -> new StoreConflictException("Cart is empty"));
         var existing = orders.findByCustomerIdAndIdempotencyKey(customerId, key);
-        if (existing.isPresent()) return existing.get().toDomain();
+        if (existing.isPresent()) {
+            var replay = existing.get().toDomain();
+            enqueueCheckoutNotification(replay);
+            return replay;
+        }
         var cart = cartEntity.toDomain();
         requireVersion(cart.version(), expectedCartVersion);
         if (cart.lines().isEmpty()) throw new StoreConflictException("Cart is empty");
-        for (var line : cart.lines()) {
-            // The stock predicate and this transaction prevent overselling without a JVM-wide lock.
-            if (products.decrementStock(line.productId(), line.quantity()) != 1) {
-                throw new InsufficientStockException(line.productId());
-            }
+        // Lock product rows in a stable order. The whole order is either reserved or backordered;
+        // a multi-line checkout never consumes only the lines that happened to be available.
+        var lockedProducts = cart.lines().stream().sorted(java.util.Comparator.comparing(line -> line.productId()))
+                .map(line -> products.findByIdForUpdate(line.productId())
+                        .orElseThrow(() -> new NotFoundException("Unknown product " + line.productId())))
+                .toList();
+        var quantities = cart.lines().stream().collect(java.util.stream.Collectors.toMap(
+                line -> line.productId(), line -> line.quantity()));
+        var inventoryAvailable = lockedProducts.stream()
+                .allMatch(product -> product.stock >= quantities.get(product.id));
+        if (inventoryAvailable) {
+            lockedProducts.forEach(product -> product.reserveStock(quantities.get(product.id)));
+            products.saveAllAndFlush(lockedProducts);
         }
-        var order = Order.submitted(UUID.randomUUID().toString(), customerId, key, Instant.now(clock), address,
-                cart, approvalThreshold);
+        var now = Instant.now(clock);
+        var order = inventoryAvailable
+                ? Order.submitted(UUID.randomUUID().toString(), customerId, key, now, address, cart, approvalThreshold)
+                : Order.backordered(UUID.randomUUID().toString(), customerId, key, now, address, cart);
         try {
             var persistedOrder = orders.saveAndFlush(new OrderJpaEntity(order));
+            var persisted = persistedOrder.toDomain();
+            enqueueCheckoutNotification(persisted);
             cartEntity.replaceWith(Cart.empty(cart.id(), customerId, cart.version()));
             carts.saveAndFlush(cartEntity);
             // Hibernate owns the initial @Version value. Return that persisted value so the first
             // administrator/supplier command uses the same optimistic token as the database row.
-            return persistedOrder.toDomain();
+            return persisted;
         } catch (DataIntegrityViolationException duplicate) {
             throw new DuplicateCheckoutException(duplicate);
         } catch (ObjectOptimisticLockingFailureException conflict) {
             throw new StoreConflictException("The cart changed during checkout; refresh and retry", conflict);
         }
+    }
+
+    private void enqueueCheckoutNotification(Order order) {
+        var type = switch (order.status()) {
+            case Order.BACKORDERED -> CustomerNotification.Type.ORDER_BACKORDERED;
+            case Order.PENDING -> CustomerNotification.Type.ORDER_PENDING;
+            default -> CustomerNotification.Type.ORDER_APPROVED;
+        };
+        notifications.enqueue(order, type, order.createdAt());
     }
 
     @Override
@@ -157,9 +186,16 @@ class OracleStorefrontStore implements StorefrontStore {
     @Override @Transactional
     public void seedIfEmpty() {
         database.execute("catalog.seed", false, () -> {
-            if (products.count() == 0) {
-                products.saveAll(SeedProducts.all().stream().map(ProductJpaEntity::new).toList());
+            for (var product : SeedProducts.all()) {
+                var existing = products.findById(product.id());
+                if (existing.isEmpty()) {
+                    products.save(new ProductJpaEntity(product));
+                } else {
+                    existing.get().applyCatalogMetadata(product);
+                    products.save(existing.get());
+                }
             }
+            products.flush();
         });
     }
 

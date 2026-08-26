@@ -8,7 +8,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.mongodb.MongoDBContainer;
 import org.testcontainers.utility.DockerImageName;
 
-@SpringBootTest(properties = {"spring.profiles.active=mongo", "app.store=mongo"})
+@SpringBootTest(properties = {"spring.profiles.active=mongo", "app.store=mongo",
+        "app.notifications.poll-interval=1h"})
 @Testcontainers(disabledWithoutDocker = true)
 class MongoStorefrontIntegrationTest extends StorefrontStoreContract {
     @Container

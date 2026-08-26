@@ -25,7 +25,11 @@ x-app-common: &app-common
 
 services:
   oracle:
-    image: ghcr.io/gvenzl/oracle-free:23.26.2-slim
+    # 23.26.2 exits while starting PMON on this Docker Desktop/Apple Silicon runtime.
+    # The ARM-native 23.9 faststart image is stable. Its writable layer survives
+    # stop/start; do not use `compose down` when local Oracle data must be retained.
+    image: ghcr.io/gvenzl/oracle-free:23.9-slim-faststart
+    platform: linux/arm64
     profiles: ["oracle"]
     environment:
       ORACLE_PASSWORD: ${ORACLE_ADMIN_PASSWORD:-oracle_local_admin}
@@ -33,8 +37,6 @@ services:
       APP_USER_PASSWORD: ${ORACLE_PASSWORD:-petstore_local_only}
     ports:
       - "${ORACLE_PORT:-1521}:1521"
-    volumes:
-      - oracle-data-recovered:/opt/oracle/oradata
     healthcheck:
       test: ["CMD", "healthcheck.sh"]
       interval: 10s
@@ -104,6 +106,5 @@ services:
         condition: service_healthy
 
 volumes:
-  oracle-data-recovered:
   mongo-data:
   app-logs:

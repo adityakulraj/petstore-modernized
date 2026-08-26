@@ -8,7 +8,8 @@ import java.util.List;
 
 public interface SupplierStore {
     List<Product> inventory();
-    Product replaceInventory(String productId, long expectedVersion, int quantity);
+    Product replaceInventory(String productId, long expectedVersion, int quantity, String idempotencyKey);
+    List<Order> backorders();
     List<SupplierPurchaseOrder> purchaseOrders();
     SupplierPurchaseOrder ensurePurchaseOrder(Order order);
     SupplierPurchaseOrder processPurchaseOrder(String purchaseOrderId, long expectedVersion);

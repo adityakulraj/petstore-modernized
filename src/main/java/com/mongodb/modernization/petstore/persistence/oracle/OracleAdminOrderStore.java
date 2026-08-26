@@ -3,6 +3,8 @@ package com.mongodb.modernization.petstore.persistence.oracle;
 import com.mongodb.modernization.petstore.observability.DatabaseExecutor;
 import com.mongodb.modernization.petstore.orders.application.AdminOrderStore;
 import com.mongodb.modernization.petstore.orders.domain.Order;
+import com.mongodb.modernization.petstore.notifications.application.CustomerNotificationStore;
+import com.mongodb.modernization.petstore.notifications.domain.CustomerNotification;
 import com.mongodb.modernization.petstore.shared.application.NotFoundException;
 import com.mongodb.modernization.petstore.shared.application.StoreConflictException;
 import org.springframework.context.annotation.Profile;
@@ -21,14 +23,17 @@ class OracleAdminOrderStore implements AdminOrderStore {
     private final JpaProductRepository products;
     private final TransactionTemplate transactions;
     private final DatabaseExecutor database;
+    private final CustomerNotificationStore notifications;
     private final Clock clock = Clock.systemUTC();
 
     OracleAdminOrderStore(JpaOrderRepository orders, JpaProductRepository products,
-                          PlatformTransactionManager transactionManager, DatabaseExecutor database) {
+                          PlatformTransactionManager transactionManager, DatabaseExecutor database,
+                          CustomerNotificationStore notifications) {
         this.orders = orders;
         this.products = products;
         this.transactions = new TransactionTemplate(transactionManager);
         this.database = database;
+        this.notifications = notifications;
     }
 
     @Override
@@ -43,7 +48,11 @@ class OracleAdminOrderStore implements AdminOrderStore {
                 () -> transactions.execute(ignored -> {
                     var entity = orders.findByIdForReview(orderId)
                             .orElseThrow(() -> new NotFoundException("Unknown order " + orderId));
-                    if (compatible(entity.status, decision)) return entity.toDomain();
+                    if (compatible(entity.status, decision)) {
+                        var replay = entity.toDomain();
+                        enqueueDecision(replay, decision);
+                        return replay;
+                    }
                     if (!Order.PENDING.equals(entity.status)) {
                         throw new StoreConflictException("Only pending orders can be approved or denied");
                     }
@@ -58,8 +67,16 @@ class OracleAdminOrderStore implements AdminOrderStore {
                             }
                         }
                     }
-                    return orders.saveAndFlush(entity).toDomain();
+                    var reviewed = orders.saveAndFlush(entity).toDomain();
+                    enqueueDecision(reviewed, decision);
+                    return reviewed;
                 }));
+    }
+
+    private void enqueueDecision(Order order, Decision decision) {
+        var type = decision == Decision.APPROVED
+                ? CustomerNotification.Type.ORDER_APPROVED : CustomerNotification.Type.ORDER_DENIED;
+        notifications.enqueue(order, type, order.reviewedAt() == null ? order.createdAt() : order.reviewedAt());
     }
 
     private static boolean compatible(String status, Decision decision) {

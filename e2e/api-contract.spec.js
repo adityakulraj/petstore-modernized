@@ -87,7 +87,7 @@ test('public session, catalog, categories, filters, and product lookup have pari
   expect(catalog.status()).toBe(200);
   const products = await catalog.json();
   expect(products.map(item => item.id)).toEqual([
-    'AV-CB-01', 'FI-SW-01', 'FI-SW-02', 'FL-DSH-01', 'K9-BD-01', 'K9-RT-01', 'RP-IG-01'
+    'AV-CB-01', 'FI-SW-01', 'FI-SW-02', 'FL-DSH-01', 'K9-BD-01', 'K9-BD-02', 'K9-RT-01', 'RP-IG-01'
   ]);
   expect(products.every(item => item.stock === SEED_STOCK[item.id] && item.version === 0)).toBe(true);
 
@@ -100,11 +100,16 @@ test('public session, catalog, categories, filters, and product lookup have pari
   const search = await request.get('/api/v1/catalog/products', { params: { query: '  IGUANA  ' } });
   expect((await search.json()).map(item => item.id)).toEqual(['RP-IG-01']);
   const blanks = await request.get('/api/v1/catalog/products', { params: { category: ' ', query: ' ' } });
-  expect(await blanks.json()).toHaveLength(7);
+  expect(await blanks.json()).toHaveLength(8);
 
   const item = await request.get('/api/v1/catalog/products/AV-CB-01');
   expect(item.status()).toBe(200);
   expect(await item.json()).toMatchObject({ id: 'AV-CB-01', name: 'Canary', price: 125, stock: 10 });
+  const bulldogs = products.filter(item => item.productGroupId === 'K9-BD');
+  expect(bulldogs).toMatchObject([
+    { id: 'K9-BD-01', variantName: 'Male Adult', name: 'Bulldog' },
+    { id: 'K9-BD-02', variantName: 'Female Puppy', name: 'Bulldog' }
+  ]);
   const missing = await request.get('/api/v1/catalog/products/does-not-exist');
   expect(missing.status()).toBe(404);
   expect(await missing.json()).toMatchObject({ status: 404, instance: '/api/v1/catalog/products/does-not-exist' });
@@ -184,6 +189,8 @@ test('health telemetry, pool metrics, and query plans are visible only to admin'
   const admin = await login(playwright, 'admin');
   try {
     expect((await customer.context.get('/api/v1/admin/health')).status()).toBe(403);
+    expect((await customer.context.get('/actuator/metrics')).status()).toBe(403);
+    expect((await admin.context.get('/actuator/metrics')).status()).toBe(200);
     const response = await admin.context.get('/api/v1/admin/health');
     expect(response.status()).toBe(200);
     const health = await response.json();
@@ -228,13 +235,13 @@ test('health telemetry, pool metrics, and query plans are visible only to admin'
 test('protected APIs reject anonymous requests and mutations without CSRF', async ({ request, playwright }) => {
   for (const path of ['/api/v1/cart', '/api/v1/orders']) {
     const response = await request.get(path, { maxRedirects: 0 });
-    expect(response.status(), path).toBe(401);
-    expect(response.headers()['www-authenticate'], path).toMatch(/^Basic/);
+    expect(response.status(), path).toBe(302);
+    expect(response.headers().location, path).toMatch(/\/login$/);
   }
   expect((await request.get('/api/v1/csrf')).status()).toBe(200);
 
   const anonymousMutation = await request.post('/api/v1/cart/items', {
-    data: { productId: 'AV-CB-01', quantity: 1, expectedVersion: 0 }
+    data: { productId: 'AV-CB-01', quantity: 1, expectedVersion: 0 }, maxRedirects: 0
   });
   expect(anonymousMutation.status()).toBe(403);
 
@@ -282,11 +289,58 @@ test('invalid credentials fail and both configured users can authenticate and lo
         supplier: false
       });
       const logout = await client.context.post('/logout', { headers: client.csrf, maxRedirects: 0 });
-      expect(logout.status()).toBe(204);
+      expect(logout.status()).toBe(302);
+      expect(logout.headers().location).toMatch(/\/$/);
       expect(await (await client.context.get('/api/v1/session')).json()).toMatchObject({ authenticated: false });
     } finally {
       await client.context.dispose();
     }
+  }
+});
+
+test('cached Basic credentials cannot override a stale customer session during an admin role switch', async ({ playwright }) => {
+  const customer = await login(playwright, 'alice');
+  try {
+    expect(await (await customer.context.get('/api/v1/session')).json()).toMatchObject({
+      username: USERS.alice, admin: false
+    });
+
+    const authorization = `Basic ${Buffer.from(`${USERS.admin}:${PASSWORDS.admin}`).toString('base64')}`;
+    const diagnostic = await customer.context.get('/api/v1/admin/health', {
+      headers: { Authorization: authorization }
+    });
+    expect(diagnostic.status()).toBe(200);
+    // Basic is permitted for this read-only request, but must not be saved over the customer form session.
+    expect(await (await customer.context.get('/api/v1/session')).json()).toMatchObject({
+      authenticated: true, username: USERS.alice, admin: false
+    });
+
+    const dashboard = await customer.context.get('/admin/catalog.html', {
+      headers: { Authorization: authorization }, maxRedirects: 0
+    });
+    expect(dashboard.status()).toBe(403);
+
+    // The cached Basic credential is ignored and the customer session remains authoritative.
+    expect(await (await customer.context.get('/api/v1/session')).json()).toMatchObject({
+      authenticated: true, username: USERS.alice, admin: false
+    });
+
+    const logout = await customer.context.post('/logout', { headers: customer.csrf, maxRedirects: 0 });
+    expect(logout.status()).toBe(302);
+
+    const loginPage = await customer.context.get('/login');
+    const token = (await loginPage.text()).match(/name="_csrf"[^>]*value="([^"]+)"/)[1];
+    const adminLogin = await customer.context.post('/login', {
+      form: { username: USERS.admin, password: PASSWORDS.admin, _csrf: token }, maxRedirects: 0
+    });
+    expect(adminLogin.status()).toBe(302);
+    expect(adminLogin.headers().location).toMatch(/\/$/);
+    expect(await (await customer.context.get('/api/v1/session')).json()).toMatchObject({
+      username: USERS.admin, admin: true
+    });
+    expect((await customer.context.get('/api/v1/admin/catalog/items')).status()).toBe(200);
+  } finally {
+    await customer.context.dispose();
   }
 });
 
@@ -299,6 +353,41 @@ test('the two users have isolated carts', async ({ playwright }) => {
     expect(added.status()).toBe(200);
     expect((await added.json()).lines).toMatchObject([{ productId: 'AV-CB-01', quantity: 2 }]);
     expect((await cart(aditya)).lines).toEqual([]);
+  } finally {
+    await alice.context.dispose();
+    await aditya.context.dispose();
+  }
+});
+
+test('MyList is customer-isolated and favorite retries are idempotent with personalized recommendations', async ({ request, playwright }) => {
+  expect((await request.get('/api/v1/my-list', { maxRedirects: 0 })).status()).toBe(302);
+  const alice = await login(playwright, 'alice');
+  const aditya = await login(playwright, 'aditya');
+  try {
+    const initial = await alice.context.get('/api/v1/my-list');
+    expect(initial.status()).toBe(200);
+    expect(await initial.json()).toMatchObject({
+      enabled: true,
+      favorites: [],
+      recommendations: [
+        { id: 'K9-BD-01' }, { id: 'K9-BD-02' }, { id: 'K9-RT-01' }
+      ]
+    });
+    const add = () => alice.context.post('/api/v1/my-list/items/K9-BD-01', { headers: alice.csrf });
+    const retried = await Promise.all([add(), add()]);
+    expect(retried.map(response => response.status())).toEqual([200, 200]);
+    const saved = await (await alice.context.get('/api/v1/my-list')).json();
+    expect(saved.favorites).toMatchObject([{ id: 'K9-BD-01', variantName: 'Male Adult' }]);
+    expect(saved.recommendations[0]).toMatchObject({ id: 'K9-BD-02', variantName: 'Female Puppy' });
+    expect(saved.recommendations.map(item => item.id)).not.toContain('K9-BD-01');
+    expect((await (await aditya.context.get('/api/v1/my-list')).json()).favorites).toEqual([]);
+
+    expect((await alice.context.post('/api/v1/my-list/items/not-a-product', { headers: alice.csrf })).status()).toBe(404);
+    expect((await alice.context.post('/api/v1/my-list/items/K9-BD-02')).status()).toBe(403);
+    const remove = () => alice.context.delete('/api/v1/my-list/items/K9-BD-01', { headers: alice.csrf });
+    expect((await remove()).status()).toBe(200);
+    expect((await remove()).status()).toBe(200);
+    expect((await (await alice.context.get('/api/v1/my-list')).json()).favorites).toEqual([]);
   } finally {
     await alice.context.dispose();
     await aditya.context.dispose();
@@ -493,25 +582,25 @@ test('checkout rejects a stale cart without changing orders or inventory', async
   }
 });
 
-test('insufficient inventory rolls back earlier decrements and preserves the cart', async ({ playwright }) => {
+test('insufficient inventory creates one atomic backorder without consuming available lines', async ({ playwright }) => {
   const client = await login(playwright);
   try {
     let current = await cart(client);
     current = await (await addItem(client, 'FI-SW-01', 1, current.version)).json();
     current = await (await addItem(client, 'K9-BD-01', 5, current.version)).json();
     const response = await checkout(client, current.version);
-    expect(response.status()).toBe(409);
-    expect((await response.json()).detail).toContain('Insufficient stock');
+    expect(response.status()).toBe(201);
+    expect(await response.json()).toMatchObject({ status: 'BACKORDERED' });
     expect(await product(client.context, 'FI-SW-01')).toMatchObject({ stock: 25, version: 0 });
     expect(await product(client.context, 'K9-BD-01')).toMatchObject({ stock: 4, version: 0 });
-    expect((await cart(client)).lines).toHaveLength(2);
-    expect(await (await client.context.get('/api/v1/orders')).json()).toEqual([]);
+    expect((await cart(client)).lines).toHaveLength(0);
+    expect(await (await client.context.get('/api/v1/orders')).json()).toHaveLength(1);
   } finally {
     await client.context.dispose();
   }
 });
 
-test('two users racing for the last inventory produce one order and never negative stock', async ({ playwright }) => {
+test('two users racing for the last inventory produce one reservation and one backorder', async ({ playwright }) => {
   const alice = await login(playwright, 'alice');
   const aditya = await login(playwright, 'aditya');
   try {
@@ -521,14 +610,16 @@ test('two users racing for the last inventory produce one order and never negati
       checkout(alice, aliceCart.version, crypto.randomUUID()),
       checkout(aditya, adityaCart.version, crypto.randomUUID())
     ]);
-    expect(responses.map(response => response.status()).sort()).toEqual([201, 409]);
+    expect(responses.map(response => response.status())).toEqual([201, 201]);
+    const placed = await Promise.all(responses.map(response => response.json()));
+    expect(placed.map(order => order.status).sort()).toEqual(['BACKORDERED', 'PENDING']);
     expect(await product(alice.context, 'K9-BD-01')).toMatchObject({ stock: 0, version: 1 });
     const aliceOrders = await (await alice.context.get('/api/v1/orders')).json();
     const adityaOrders = await (await aditya.context.get('/api/v1/orders')).json();
-    expect(aliceOrders.length + adityaOrders.length).toBe(1);
+    expect(aliceOrders.length + adityaOrders.length).toBe(2);
     const aliceLines = (await cart(alice)).lines;
     const adityaLines = (await cart(aditya)).lines;
-    expect([aliceLines.length, adityaLines.length].sort()).toEqual([0, 1]);
+    expect([aliceLines.length, adityaLines.length]).toEqual([0, 0]);
   } finally {
     await alice.context.dispose();
     await aditya.context.dispose();
@@ -577,7 +668,7 @@ test('idempotency keys and order history are scoped per user', async ({ playwrig
 
 test('admin approval lifecycle gates supplier handoff and denial restores stock exactly once', async ({ playwright, request }) => {
   const anonymous = await request.get('/api/v1/admin/orders', { maxRedirects: 0 });
-  expect(anonymous.status()).toBe(401);
+  expect(anonymous.status()).toBe(302);
   const customer = await login(playwright, 'alice');
   const adminA = await login(playwright, 'admin');
   const adminB = await login(playwright, 'admin');
@@ -636,7 +727,7 @@ test('admin approval lifecycle gates supplier handoff and denial restores stock 
 
 test('supplier role safely updates inventory and idempotently processes purchase orders', async ({ playwright, request }) => {
   const anonymousInventory = await request.get('/api/v1/supplier/inventory', { maxRedirects: 0 });
-  expect(anonymousInventory.status()).toBe(401);
+  expect(anonymousInventory.status()).toBe(302);
   const customer = await login(playwright, 'alice');
   const supplier = await login(playwright, 'supplier');
   try {
@@ -648,19 +739,20 @@ test('supplier role safely updates inventory and idempotently processes purchase
     const inventoryResponse = await supplier.context.get('/api/v1/supplier/inventory');
     expect(inventoryResponse.status()).toBe(200);
     const initial = (await inventoryResponse.json()).find(item => item.id === 'AV-CB-01');
+    const inventoryKey = crypto.randomUUID();
     const firstUpdate = await supplier.context.put('/api/v1/supplier/inventory/AV-CB-01', {
-      headers: supplier.csrf, data: { expectedVersion: initial.version, quantity: 12 }
+      headers: { ...supplier.csrf, 'Idempotency-Key': inventoryKey }, data: { expectedVersion: initial.version, quantity: 12 }
     });
     expect(firstUpdate.status()).toBe(200);
     const updated = await firstUpdate.json();
     expect(updated).toMatchObject({ stock: 12, version: 1 });
     const identicalReplay = await supplier.context.put('/api/v1/supplier/inventory/AV-CB-01', {
-      headers: supplier.csrf, data: { expectedVersion: initial.version, quantity: 12 }
+      headers: { ...supplier.csrf, 'Idempotency-Key': inventoryKey }, data: { expectedVersion: initial.version, quantity: 12 }
     });
     expect(identicalReplay.status()).toBe(200);
     expect(await identicalReplay.json()).toMatchObject({ stock: 12, version: 1 });
     const staleCompetingUpdate = await supplier.context.put('/api/v1/supplier/inventory/AV-CB-01', {
-      headers: supplier.csrf, data: { expectedVersion: initial.version, quantity: 13 }
+      headers: { ...supplier.csrf, 'Idempotency-Key': inventoryKey }, data: { expectedVersion: initial.version, quantity: 13 }
     });
     expect(staleCompetingUpdate.status()).toBe(409);
 
@@ -686,11 +778,121 @@ test('supplier role safely updates inventory and idempotently processes purchase
     expect(history.find(order => order.id === placed.id).status).toBe('COMPLETED');
 
     const missingCsrf = await supplier.context.put('/api/v1/supplier/inventory/AV-CB-01', {
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
       data: { expectedVersion: 1, quantity: 10 }
     });
     expect(missingCsrf.status()).toBe(403);
   } finally {
     await customer.context.dispose();
+    await supplier.context.dispose();
+  }
+});
+
+test('supplier replenishment releases a backorder once and preserves its customer timeline', async ({ playwright }) => {
+  const customer = await login(playwright, 'alice');
+  const supplierA = await login(playwright, 'supplier');
+  const supplierB = await login(playwright, 'supplier');
+  try {
+    const initial = await product(customer.context, 'FI-SW-02');
+    const quantity = initial.stock + 1;
+    const changed = await (await addItem(customer, initial.id, quantity, (await cart(customer)).version)).json();
+    const backordered = await (await checkout(customer, changed.version, 'backorder-e2e')).json();
+    expect(backordered.status).toBe('BACKORDERED');
+    expect(await product(customer.context, initial.id)).toMatchObject({ stock: initial.stock, version: initial.version });
+
+    const waiting = await supplierA.context.get('/api/v1/supplier/backorders');
+    expect(waiting.status()).toBe(200);
+    expect(await waiting.json()).toContainEqual(expect.objectContaining({ id: backordered.id, status: 'BACKORDERED' }));
+
+    const commandKey = crypto.randomUUID();
+    const replenish = client => client.context.put(`/api/v1/supplier/inventory/${initial.id}`, {
+      headers: { ...client.csrf, 'Idempotency-Key': commandKey },
+      data: { expectedVersion: initial.version, quantity }
+    });
+    const responses = await Promise.all([replenish(supplierA), replenish(supplierB)]);
+    expect(responses.map(response => response.status())).toEqual([200, 200]);
+    const results = await Promise.all(responses.map(response => response.json()));
+    expect(results[0]).toMatchObject({ stock: 0 });
+    expect(results[1]).toEqual(results[0]);
+
+    const history = await (await customer.context.get('/api/v1/orders')).json();
+    expect(history.find(order => order.id === backordered.id).status).toBe('APPROVED');
+    expect((await (await supplierA.context.get('/api/v1/supplier/backorders')).json())
+      .some(order => order.id === backordered.id)).toBe(false);
+    const purchaseOrders = await (await supplierA.context.get('/api/v1/supplier/purchase-orders')).json();
+    expect(purchaseOrders.filter(po => po.orderId === backordered.id)).toHaveLength(1);
+    const inbox = await (await customer.context.get('/api/v1/notifications')).json();
+    expect(inbox.filter(item => item.orderId === backordered.id).map(item => item.type).sort())
+      .toEqual(['ORDER_APPROVED', 'ORDER_BACKORDERED', 'ORDER_INVENTORY_ALLOCATED']);
+  } finally {
+    await customer.context.dispose();
+    await supplierA.context.dispose();
+    await supplierB.context.dispose();
+  }
+});
+
+test('customer notification outbox tracks approval and fulfilment without duplicates', async ({ playwright, request }) => {
+  const anonymous = await request.get('/api/v1/notifications', { maxRedirects: 0 });
+  expect(anonymous.status()).toBe(302);
+  const customer = await login(playwright, 'alice');
+  const otherCustomer = await login(playwright, 'aditya');
+  const admin = await login(playwright, 'admin');
+  const supplier = await login(playwright, 'supplier');
+  try {
+    expect((await admin.context.get('/api/v1/notifications')).status()).toBe(403);
+    const changed = await (await addItem(customer, 'K9-BD-01', 1, (await cart(customer)).version)).json();
+    const pending = await (await checkout(customer, changed.version, 'notification-lifecycle-e2e')).json();
+    expect(pending.status).toBe('PENDING');
+    await checkout(customer, changed.version, 'notification-lifecycle-e2e');
+
+    let inbox = await (await customer.context.get('/api/v1/notifications')).json();
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0]).toMatchObject({
+      id: `${pending.id}:ORDER_PENDING`, orderId: pending.id, customerId: USERS.alice,
+      type: 'ORDER_PENDING', deliveryStatus: expect.stringMatching(/PENDING|DELIVERED/), readAt: null
+    });
+    expect(await (await otherCustomer.context.get('/api/v1/notifications')).json()).toEqual([]);
+
+    const approvedResponse = await admin.context.post(`/api/v1/admin/orders/${pending.id}/decision`, {
+      headers: admin.csrf, data: { expectedVersion: pending.version, decision: 'APPROVED' }
+    });
+    expect(approvedResponse.status()).toBe(200);
+    await admin.context.post(`/api/v1/admin/orders/${pending.id}/decision`, {
+      headers: admin.csrf, data: { expectedVersion: pending.version, decision: 'APPROVED' }
+    });
+
+    let purchaseOrders = await (await supplier.context.get('/api/v1/supplier/purchase-orders')).json();
+    const purchaseOrder = purchaseOrders.find(item => item.orderId === pending.id);
+    const processed = await supplier.context.post(`/api/v1/supplier/purchase-orders/${purchaseOrder.id}/process`, {
+      headers: supplier.csrf, data: { expectedVersion: purchaseOrder.version }
+    });
+    expect(processed.status()).toBe(200);
+    await supplier.context.post(`/api/v1/supplier/purchase-orders/${purchaseOrder.id}/process`, {
+      headers: supplier.csrf, data: { expectedVersion: purchaseOrder.version }
+    });
+
+    inbox = await (await customer.context.get('/api/v1/notifications')).json();
+    expect(inbox.map(item => item.type).sort()).toEqual(['ORDER_APPROVED', 'ORDER_COMPLETED', 'ORDER_PENDING']);
+    expect(new Set(inbox.map(item => item.id)).size).toBe(3);
+    const completed = inbox.find(item => item.type === 'ORDER_COMPLETED');
+    const marked = await customer.context.post(`/api/v1/notifications/${encodeURIComponent(completed.id)}/read`, {
+      headers: customer.csrf, data: { expectedVersion: completed.version }
+    });
+    expect(marked.status()).toBe(200);
+    const read = await marked.json();
+    expect(read.readAt).not.toBeNull();
+    const replay = await customer.context.post(`/api/v1/notifications/${encodeURIComponent(completed.id)}/read`, {
+      headers: customer.csrf, data: { expectedVersion: completed.version }
+    });
+    expect(replay.status()).toBe(200);
+    expect((await replay.json()).version).toBe(read.version);
+    expect((await otherCustomer.context.post(`/api/v1/notifications/${encodeURIComponent(completed.id)}/read`, {
+      headers: otherCustomer.csrf, data: { expectedVersion: read.version }
+    })).status()).toBe(404);
+  } finally {
+    await customer.context.dispose();
+    await otherCustomer.context.dispose();
+    await admin.context.dispose();
     await supplier.context.dispose();
   }
 });
@@ -734,4 +936,137 @@ test('customer account registration, login, profile read/update, validation, and
     });
     expect((await account.context.put('/api/v1/accounts/me', { data: registration })).status()).toBe(403);
   } finally { await account.context.dispose(); }
+});
+
+test('admin sales analytics separates recognized revenue, pipeline, category drilldown, and invalid ranges', async ({ playwright, request }) => {
+  const anonymous = await request.get('/api/v1/admin/analytics/sales', { maxRedirects: 0 });
+  expect([302, 401]).toContain(anonymous.status());
+  const customer = await login(playwright, 'alice');
+  const admin = await login(playwright, 'admin');
+  try {
+    expect((await customer.context.get('/api/v1/admin/analytics/sales')).status()).toBe(403);
+
+    let changed = await (await addItem(customer, 'AV-CB-01', 2, (await cart(customer)).version)).json();
+    const accepted = await (await checkout(customer, changed.version, 'analytics-accepted')).json();
+    expect(accepted.status).toBe('APPROVED');
+    changed = await (await addItem(customer, 'K9-BD-01', 1, (await cart(customer)).version)).json();
+    const pending = await (await checkout(customer, changed.version, 'analytics-pending')).json();
+    expect(pending.status).toBe('PENDING');
+
+    const reportResponse = await admin.context.get('/api/v1/admin/analytics/sales');
+    expect(reportResponse.status()).toBe(200);
+    const report = await reportResponse.json();
+    expect(report.dimension).toBe('CATEGORY');
+    expect(report.summary).toEqual({
+      acceptedOrders: 1, unitsSold: 2, revenue: 250, averageOrderValue: 250, pendingValue: 850
+    });
+    expect(report.breakdown).toEqual([
+      { key: 'BIRDS', label: 'Birds', orderCount: 1, unitsSold: 2, revenue: 250 }
+    ]);
+    expect(report.statuses).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'APPROVED', orderCount: 1, value: 250 }),
+      expect.objectContaining({ status: 'PENDING', orderCount: 1, value: 850 })
+    ]));
+
+    const dogsResponse = await admin.context.get('/api/v1/admin/analytics/sales', { params: { category: 'dogs' } });
+    expect(dogsResponse.status()).toBe(200);
+    const dogs = await dogsResponse.json();
+    expect(dogs).toMatchObject({ categoryId: 'DOGS', dimension: 'ITEM', summary: { revenue: 0, pendingValue: 850 } });
+    expect(dogs.breakdown).toEqual([]);
+    expect(dogs.statuses).toContainEqual(expect.objectContaining({ status: 'PENDING', orderCount: 1, value: 850 }));
+
+    expect((await admin.context.get('/api/v1/admin/analytics/sales', {
+      params: { from: '2026-08-27', to: '2026-08-26' }
+    })).status()).toBe(400);
+    expect((await admin.context.get('/api/v1/admin/analytics/sales', {
+      params: { from: '2024-01-01', to: '2026-08-26' }
+    })).status()).toBe(400);
+    expect((await admin.context.get('/api/v1/admin/analytics/sales', { params: { category: 'HORSES' } })).status()).toBe(404);
+    expect((await admin.context.get('/admin/sales')).status()).toBe(200);
+  } finally {
+    await customer.context.dispose();
+    await admin.context.dispose();
+  }
+});
+
+test('admin catalog lifecycle is idempotent, concurrency-safe, audited, and preserves quoted cart prices', async ({ playwright, request }) => {
+  const anonymous = await request.get('/api/v1/admin/catalog/items', { maxRedirects: 0 });
+  expect([302, 401]).toContain(anonymous.status());
+  const admin = await login(playwright, 'admin');
+  const customer = await login(playwright, 'alice');
+  const supplier = await login(playwright, 'supplier');
+  const item = {
+    id: 'CT-API-01', productGroupId: 'CT-API', variantName: 'Female Adult', categoryId: 'CATS',
+    categoryName: 'Cats', name: 'Siamese', description: 'A catalog-managed companion', price: 425, active: true
+  };
+  try {
+    expect((await customer.context.get('/api/v1/admin/catalog/items')).status()).toBe(403);
+    expect((await supplier.context.get('/api/v1/admin/catalog/items')).status()).toBe(403);
+
+    const create = () => admin.context.post('/api/v1/admin/catalog/items', { headers: admin.csrf, data: item });
+    const createdResponse = await create();
+    expect(createdResponse.status()).toBe(201);
+    const created = await createdResponse.json();
+    expect(created).toMatchObject({ ...item, stock: 0, version: 0 });
+    const createReplay = await create();
+    expect(createReplay.status()).toBe(201);
+    expect((await createReplay.json()).version).toBe(created.version);
+
+    const stockResponse = await supplier.context.put(`/api/v1/supplier/inventory/${item.id}`, {
+      headers: { ...supplier.csrf, 'Idempotency-Key': 'catalog-api-stock' },
+      data: { expectedVersion: created.version, quantity: 2 }
+    });
+    expect(stockResponse.status()).toBe(200);
+    const stocked = await stockResponse.json();
+
+    const customerCart = await cart(customer);
+    const quotedCart = await (await addItem(customer, item.id, 1, customerCart.version)).json();
+    expect(quotedCart.lines[0]).toMatchObject({ productId: item.id, unitPrice: 425 });
+
+    const update = {
+      expectedVersion: stocked.version, productGroupId: item.productGroupId, variantName: item.variantName,
+      categoryId: item.categoryId, categoryName: item.categoryName, name: item.name,
+      description: item.description, price: 450, active: true
+    };
+    const updatedResponse = await admin.context.put(`/api/v1/admin/catalog/items/${item.id}`, {
+      headers: admin.csrf, data: update
+    });
+    expect(updatedResponse.status()).toBe(200);
+    const updated = await updatedResponse.json();
+    expect(updated).toMatchObject({ price: 450, stock: 2, active: true });
+
+    const updateReplay = await admin.context.put(`/api/v1/admin/catalog/items/${item.id}`, {
+      headers: admin.csrf, data: update
+    });
+    expect(updateReplay.status()).toBe(200);
+    expect((await updateReplay.json()).version).toBe(updated.version);
+    const staleCompeting = await admin.context.put(`/api/v1/admin/catalog/items/${item.id}`, {
+      headers: admin.csrf, data: { ...update, price: 451, description: 'Competing change' }
+    });
+    expect(staleCompeting.status()).toBe(409);
+
+    const archivedResponse = await admin.context.put(`/api/v1/admin/catalog/items/${item.id}`, {
+      headers: admin.csrf, data: { ...update, expectedVersion: updated.version, active: false }
+    });
+    expect(archivedResponse.status()).toBe(200);
+    const archived = await archivedResponse.json();
+    expect(archived).toMatchObject({ active: false, price: 450, stock: 2 });
+    expect((await request.get(`/api/v1/catalog/products/${item.id}`)).status()).toBe(404);
+    expect((await (await admin.context.get('/api/v1/admin/catalog/items')).json()))
+      .toContainEqual(expect.objectContaining({ id: item.id, active: false }));
+
+    const order = await (await checkout(customer, quotedCart.version, 'catalog-price-snapshot')).json();
+    expect(order.lines[0]).toMatchObject({ productId: item.id, unitPrice: 425 });
+    const changes = await (await admin.context.get('/api/v1/admin/catalog/changes')).json();
+    expect(changes.filter(change => change.productId === item.id)).toMatchObject([
+      { action: 'UPDATED', previousPrice: 450, newPrice: 450, previousActive: true, newActive: false },
+      { action: 'UPDATED', previousPrice: 425, newPrice: 450, previousActive: true, newActive: true },
+      { action: 'CREATED', previousPrice: null, newPrice: 425, previousActive: null, newActive: true }
+    ]);
+    expect((await admin.context.get('/admin/catalog')).status()).toBe(200);
+  } finally {
+    await admin.context.dispose();
+    await customer.context.dispose();
+    await supplier.context.dispose();
+  }
 });

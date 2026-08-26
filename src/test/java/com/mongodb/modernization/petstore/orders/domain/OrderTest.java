@@ -21,6 +21,17 @@ class OrderTest {
         assertThat(order("500.01").status()).isEqualTo(Order.PENDING);
     }
 
+    @Test
+    void backorderRetainsSnapshotsAndReentersTheNormalApprovalPolicyAfterAllocation() {
+        var cart = new Cart("cart", "alice", 1,
+                List.of(new CartLine("item", "Item", new BigDecimal("500.00"), 1)));
+        var order = Order.backordered("order", "alice", "key", Instant.EPOCH, ADDRESS, cart);
+
+        assertThat(order.status()).isEqualTo(Order.BACKORDERED);
+        assertThat(order.lines()).hasSize(1);
+        assertThat(order.statusAfterInventoryAllocation(new BigDecimal("500.00"))).isEqualTo(Order.PENDING);
+    }
+
     private static Order order(String total) {
         var price = new BigDecimal(total);
         var cart = new Cart("cart", "alice", 1, List.of(new CartLine("item", "Item", price, 1)));

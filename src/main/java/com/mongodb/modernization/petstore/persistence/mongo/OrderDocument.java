@@ -15,7 +15,8 @@ import java.util.ArrayList;
 @Document("orders")
 @CompoundIndexes({
         @CompoundIndex(name = "uk_order_idempotency", def = "{'customerId': 1, 'idempotencyKey': 1}", unique = true),
-        @CompoundIndex(name = "ix_order_customer_created", def = "{'customerId': 1, 'createdAt': -1}")
+        @CompoundIndex(name = "ix_order_customer_created", def = "{'customerId': 1, 'createdAt': -1}"),
+        @CompoundIndex(name = "ix_order_analytics_created", def = "{'createdAt': 1}")
 })
 class OrderDocument {
     @Id String id;

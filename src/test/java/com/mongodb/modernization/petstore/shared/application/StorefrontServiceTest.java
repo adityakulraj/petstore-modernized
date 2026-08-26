@@ -51,7 +51,8 @@ class StorefrontServiceTest {
         private Order ensured;
         @Override public SupplierPurchaseOrder ensurePurchaseOrder(Order order) { ensured = order; return SupplierPurchaseOrder.ready(order); }
         @Override public List<Product> inventory() { throw unsupported(); }
-        @Override public Product replaceInventory(String productId, long version, int quantity) { throw unsupported(); }
+        @Override public Product replaceInventory(String productId, long version, int quantity, String key) { throw unsupported(); }
+        @Override public List<Order> backorders() { return List.of(); }
         @Override public List<SupplierPurchaseOrder> purchaseOrders() { throw unsupported(); }
         @Override public SupplierPurchaseOrder processPurchaseOrder(String id, long version) { throw unsupported(); }
     }

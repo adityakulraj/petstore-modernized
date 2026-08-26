@@ -1,5 +1,6 @@
 package com.mongodb.modernization.petstore.shared.api;
 
+import com.mongodb.modernization.petstore.analytics.application.InvalidAnalyticsRangeException;
 import com.mongodb.modernization.petstore.cart.domain.CartLineNotFoundException;
 import com.mongodb.modernization.petstore.accounts.application.AccountAlreadyExistsException;
 import com.mongodb.modernization.petstore.cart.domain.InvalidQuantityException;
@@ -32,7 +33,8 @@ public class ApiExceptionHandler {
         return problem(HttpStatus.NOT_FOUND, error.getMessage(), request);
     }
 
-    @ExceptionHandler({InvalidQuantityException.class, ConstraintViolationException.class})
+    @ExceptionHandler({InvalidQuantityException.class, ConstraintViolationException.class,
+            InvalidAnalyticsRangeException.class})
     ProblemDetail badRequest(RuntimeException error, HttpServletRequest request) {
         return problem(HttpStatus.BAD_REQUEST, error.getMessage(), request);
     }

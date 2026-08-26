@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="PetStore administrator sales and revenue analytics">
+    <title>PetStore Sales Analytics</title>
+    <link rel="stylesheet" href="/assets/app.css">
+    <link rel="stylesheet" href="/assets/admin-sales.css">
+</head>
+<body class="sales-page">
+<header class="topbar">
+    <a class="brand" href="/admin/sales.html"><span>Pet</span>Store Admin</a>
+    <nav aria-label="Administrator navigation">
+        <a class="nav-link" href="/admin/orders.html">Order approvals</a>
+        <a class="nav-link" href="/admin/catalog.html">Catalog &amp; pricing</a>
+        <a class="nav-link" href="/admin/sales.html" aria-current="page">Sales analytics</a>
+        <a class="nav-link" href="/admin/health.html">Health</a>
+        <a class="nav-link" href="/api/v1/admin/logs?limit=200">Logs</a>
+    </nav>
+    <div id="session-actions"></div>
+</header>
+
+<main class="sales-main">
+    <section class="sales-hero">
+        <div><p class="eyebrow">BUSINESS PERFORMANCE</p><h1>Sales &amp; revenue</h1>
+            <p>Recognized revenue includes approved and completed orders. Pending value stays visible as pipeline without inflating sales.</p></div>
+        <div class="store-pill"><span id="store-name">…</span> data store</div>
+    </section>
+
+    <section class="filter-shell" aria-label="Analytics filters">
+        <form id="analytics-filters">
+            <label>From<input id="from-date" name="from" type="date" required></label>
+            <label>To<input id="to-date" name="to" type="date" required></label>
+            <label>Category<select id="category-filter" name="category"><option value="">All categories</option></select></label>
+            <button class="primary" type="submit">Apply filters</button>
+            <button class="secondary" id="reset-filters" type="button">Last 30 days</button>
+        </form>
+        <p id="analytics-scope">Loading reporting period…</p>
+    </section>
+
+    <section class="sales-summary" aria-label="Sales summary">
+        <article><span>Recognized revenue</span><strong id="revenue-total">—</strong><small>approved + completed</small></article>
+        <article><span>Accepted orders</span><strong id="accepted-orders">—</strong><small>distinct orders</small></article>
+        <article><span>Units sold</span><strong id="units-sold">—</strong><small>line-item quantity</small></article>
+        <article><span>Average order value</span><strong id="average-order">—</strong><small>for the selected scope</small></article>
+        <article class="pipeline-card"><span>Pending pipeline</span><strong id="pending-value">—</strong><small>not yet recognized</small></article>
+    </section>
+
+    <section class="analytics-grid">
+        <article class="analytics-panel trend-panel">
+            <div class="panel-title"><div><p class="eyebrow">REVENUE OVER TIME</p><h2>Daily trend</h2></div><span id="trend-peak">—</span></div>
+            <svg id="revenue-trend" viewBox="0 0 760 280" role="img" aria-label="Daily recognized revenue"></svg>
+        </article>
+        <article class="analytics-panel status-panel">
+            <div class="panel-title"><div><p class="eyebrow">ORDER PIPELINE</p><h2>Status mix</h2></div></div>
+            <div id="status-list" class="status-list"></div>
+        </article>
+    </section>
+
+    <section class="analytics-panel breakdown-panel">
+        <div class="panel-title"><div><p class="eyebrow" id="breakdown-kicker">CATEGORY PERFORMANCE</p><h2 id="breakdown-title">Revenue by category</h2>
+            <p id="breakdown-help">Select a category to drill into its individual item variants.</p></div>
+            <button id="back-to-categories" class="secondary hidden" type="button">Back to categories</button></div>
+        <div id="breakdown-bars" class="breakdown-bars"></div>
+        <div class="table-shell"><table>
+            <thead><tr><th id="dimension-heading">Category</th><th>Orders</th><th>Units</th><th>Revenue</th></tr></thead>
+            <tbody id="breakdown-body"></tbody>
+        </table></div>
+    </section>
+</main>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="/assets/admin-sales.js" defer></script>
+</body>
+</html>

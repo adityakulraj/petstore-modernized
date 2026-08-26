@@ -6,6 +6,9 @@ import com.mongodb.modernization.petstore.supplier.domain.SupplierPurchaseOrder;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -27,9 +30,14 @@ public class SupplierController {
     public List<Product> inventory() { return supplier.inventory(); }
 
     @PutMapping("/inventory/{productId}")
-    public Product replaceInventory(@PathVariable String productId, @Valid @RequestBody InventoryRequest request) {
-        return supplier.replaceInventory(productId, request.expectedVersion(), request.quantity());
+    public Product replaceInventory(@PathVariable String productId,
+                                    @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 100) String idempotencyKey,
+                                    @Valid @RequestBody InventoryRequest request) {
+        return supplier.replaceInventory(productId, request.expectedVersion(), request.quantity(), idempotencyKey);
     }
+
+    @GetMapping("/backorders")
+    public List<com.mongodb.modernization.petstore.orders.domain.Order> backorders() { return supplier.backorders(); }
 
     @GetMapping("/purchase-orders")
     public List<SupplierPurchaseOrder> purchaseOrders() { return supplier.purchaseOrders(); }

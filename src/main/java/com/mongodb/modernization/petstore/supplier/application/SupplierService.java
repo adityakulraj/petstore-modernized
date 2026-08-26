@@ -18,13 +18,16 @@ public class SupplierService {
 
     public List<Product> inventory() { return store.inventory(); }
 
-    public Product replaceInventory(String productId, long expectedVersion, int quantity) {
-        var product = store.replaceInventory(productId, expectedVersion, quantity);
+    public Product replaceInventory(String productId, long expectedVersion, int quantity, String idempotencyKey) {
+        var product = store.replaceInventory(productId, expectedVersion, quantity, idempotencyKey);
         LOG.atInfo().addKeyValue("event", "supplier.inventory.updated")
-                .addKeyValue("productId", product.id()).addKeyValue("quantity", product.stock())
+                .addKeyValue("productId", product.id()).addKeyValue("requestedQuantity", quantity)
+                .addKeyValue("resultingStock", product.stock())
                 .addKeyValue("inventoryVersion", product.version()).log("Supplier inventory updated");
         return product;
     }
+
+    public List<Order> backorders() { return store.backorders(); }
 
     public List<SupplierPurchaseOrder> purchaseOrders() { return store.purchaseOrders(); }
 

@@ -1,0 +1,36 @@
+.sales-page { background: #f4f7f2; }
+.sales-main { overflow: visible; padding-bottom: 6rem; }
+.topbar [aria-current="page"] { color: var(--green); text-decoration: underline; text-underline-offset: .35rem; }
+.sales-hero { padding: 4.3rem 8vw 4.8rem; display: flex; align-items: end; justify-content: space-between; gap: 2rem; background: linear-gradient(125deg, #17211b 0%, #20392c 62%, #0f5b42 100%); color: white; }
+.sales-hero h1 { font: 700 clamp(3rem, 6vw, 5.6rem)/.95 Georgia, serif; margin: .45rem 0 .8rem; letter-spacing: -.04em; }
+.sales-hero p:not(.eyebrow) { max-width: 720px; color: #cfdbd3; line-height: 1.6; }
+.sales-hero .eyebrow { color: var(--lime); }
+.store-pill { border: 1px solid #809188; border-radius: 999px; padding: .75rem 1rem; white-space: nowrap; }
+.filter-shell { width: min(1240px, 86vw); margin: -2rem auto 0; padding: 1.25rem 1.4rem; position: relative; background: white; border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 16px 45px rgba(18,41,28,.12); }
+.filter-shell form { display: grid; grid-template-columns: repeat(3, minmax(150px,1fr)) auto auto; gap: .8rem; align-items: end; }
+.filter-shell label { display: grid; gap: .35rem; color: var(--muted); font-size: .75rem; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; }
+.filter-shell input,.filter-shell select { min-height: 44px; padding: .65rem .8rem; border: 1px solid var(--line); border-radius: 10px; background: white; color: var(--ink); }
+.filter-shell .primary,.filter-shell .secondary { min-height: 44px; white-space: nowrap; }
+.filter-shell > p { margin: .8rem 0 0; color: var(--muted); font-size: .82rem; }
+.secondary { border: 1px solid var(--green); color: var(--green); background: white; border-radius: 999px; padding: .72rem 1rem; font-weight: 800; }
+.sales-summary { width: min(1240px,86vw); margin: 2rem auto; display: grid; grid-template-columns: repeat(5,1fr); gap: 1rem; }
+.sales-summary article { min-height: 135px; padding: 1.25rem; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 17px; background: white; box-shadow: 0 8px 28px rgba(20,40,28,.05); }
+.sales-summary span { color: var(--muted); font-size: .7rem; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+.sales-summary strong { display: block; margin: auto 0 .25rem; font: 700 clamp(1.55rem,2.4vw,2.2rem) Georgia,serif; color: var(--ink); }
+.sales-summary small { color: var(--muted); }
+.sales-summary .pipeline-card { color: white; background: var(--green); border-color: var(--green); }
+.sales-summary .pipeline-card span,.sales-summary .pipeline-card small { color: #cde4d9; }
+.sales-summary .pipeline-card strong { color: var(--lime); }
+.analytics-grid { width: min(1240px,86vw); margin: 0 auto 1rem; display: grid; grid-template-columns: minmax(0,2fr) minmax(260px,1fr); gap: 1rem; }
+.analytics-panel { padding: 1.5rem; border: 1px solid var(--line); border-radius: 18px; background: white; box-shadow: 0 8px 28px rgba(20,40,28,.05); }
+.panel-title { display: flex; justify-content: space-between; gap: 1.2rem; align-items: start; margin-bottom: 1.1rem; }
+.panel-title h2 { margin: .2rem 0; font: 700 1.65rem Georgia,serif; }
+.panel-title p:not(.eyebrow) { margin: .3rem 0; color: var(--muted); }
+.panel-title > span { color: var(--green); font-weight: 900; }
+#revenue-trend { width: 100%; min-height: 260px; overflow: visible; }
+.chart-grid-line { stroke: #e5e9e3; stroke-width: 1; }.chart-area { fill: url(#revenue-fill); }.chart-line { fill: none; stroke: var(--green); stroke-width: 4; stroke-linejoin: round; stroke-linecap: round; }.chart-dot { fill: var(--coral); stroke: white; stroke-width: 3; }.chart-label { fill: #617068; font-size: 12px; }.chart-value { fill: #17211b; font-size: 12px; font-weight: 800; }
+.status-list { display: grid; gap: .8rem; }.status-row { display: grid; grid-template-columns: 12px 1fr auto; gap: .7rem; align-items: center; padding: .7rem 0; border-bottom: 1px solid var(--line); }.status-row:last-child { border-bottom: 0; }.status-swatch { width: 10px; height: 32px; border-radius: 99px; }.status-row strong,.status-row small { display: block; }.status-row small { color: var(--muted); margin-top: .2rem; }.status-count { font: 700 1.5rem Georgia,serif; }
+.breakdown-panel { width: min(1240px,86vw); margin: 0 auto; }.breakdown-bars { display: grid; gap: .8rem; margin: 1.4rem 0 1.8rem; }.bar-row { display: grid; grid-template-columns: minmax(130px,220px) 1fr auto; gap: 1rem; align-items: center; }.bar-label { border: 0; padding: 0; background: none; text-align: left; color: var(--green); font-weight: 900; }.bar-label:disabled { color: var(--ink); cursor: default; }.bar-track { height: 14px; overflow: hidden; border-radius: 99px; background: #edf1eb; }.bar-fill { display: block; height: 100%; min-width: 3px; border-radius: inherit; background: linear-gradient(90deg,var(--green),#6ba67e); }.bar-value { min-width: 100px; text-align: right; font-weight: 900; }
+.table-shell { border: 1px solid var(--line); border-radius: 14px; overflow-x: auto; } table { width: 100%; border-collapse: collapse; } th,td { padding: .9rem 1rem; text-align: left; border-bottom: 1px solid var(--line); } th { color: var(--muted); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; } tbody tr:last-child td { border-bottom: 0; }.empty-row { color: var(--muted); text-align: center; padding: 2rem; }.hidden { display: none !important; }
+@media (max-width: 1050px) { .filter-shell form { grid-template-columns: repeat(3,1fr); }.sales-summary { grid-template-columns: repeat(3,1fr); }.analytics-grid { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .sales-hero { padding: 3rem 1.2rem 4rem; display: block; }.store-pill { display: inline-block; margin-top: 1rem; }.filter-shell,.sales-summary,.analytics-grid,.breakdown-panel { width: calc(100% - 2.4rem); }.filter-shell form,.sales-summary { grid-template-columns: 1fr; }.bar-row { grid-template-columns: 1fr auto; gap: .4rem; }.bar-track { grid-column: 1/-1; grid-row: 2; }.topbar nav { overflow-x: auto; justify-content: start; }.topbar .brand { display: none; } }

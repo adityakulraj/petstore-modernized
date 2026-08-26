@@ -23,7 +23,10 @@ import java.util.List;
 @Entity
 @Table(name = "PS_ORDER",
         uniqueConstraints = @UniqueConstraint(name = "UK_PS_ORDER_IDEMPOTENCY", columnNames = {"CUSTOMER_ID", "IDEMPOTENCY_KEY"}),
-        indexes = @Index(name = "IX_PS_ORDER_CUSTOMER_CREATED", columnList = "CUSTOMER_ID,CREATED_AT"))
+        indexes = {
+                @Index(name = "IX_PS_ORDER_CUSTOMER_CREATED", columnList = "CUSTOMER_ID,CREATED_AT"),
+                @Index(name = "IX_PS_ORDER_ANALYTICS_CREATED", columnList = "CREATED_AT")
+        })
 class OrderJpaEntity {
     @Id @Column(length = 36) String id;
     @Column(name = "CUSTOMER_ID", nullable = false, length = 100) String customerId;
@@ -58,4 +61,6 @@ class OrderJpaEntity {
         reviewedAt = when;
         reviewedBy = reviewer;
     }
+
+    void allocateInventory(String nextStatus) { status = nextStatus; }
 }

@@ -10,13 +10,14 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.time.Duration;
 
-@SpringBootTest(properties = {"spring.profiles.active=oracle", "app.store=oracle", "spring.jpa.hibernate.ddl-auto=create-drop"})
+@SpringBootTest(properties = {"spring.profiles.active=oracle", "app.store=oracle",
+        "app.notifications.poll-interval=1h", "spring.jpa.hibernate.ddl-auto=create-drop"})
 @Testcontainers(disabledWithoutDocker = true)
 class OracleStorefrontIntegrationTest extends StorefrontStoreContract {
     @Container
     // GHCR is reachable in environments where Docker Hub is intercepted, and publishes native ARM64 images.
     static final OracleContainer ORACLE = new OracleContainer(
-            DockerImageName.parse("ghcr.io/gvenzl/oracle-free:23.26.2-slim")
+            DockerImageName.parse("ghcr.io/gvenzl/oracle-free:23.9-slim-faststart")
                     .asCompatibleSubstituteFor("gvenzl/oracle-free"))
             .withStartupTimeout(Duration.ofMinutes(5));
 

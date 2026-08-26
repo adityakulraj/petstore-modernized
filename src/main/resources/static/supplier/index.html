@@ -13,6 +13,7 @@
     <a class="brand" href="/supplier/"><span>Pet</span>Store Supplier</a>
     <nav aria-label="Supplier navigation">
         <button class="nav-link" data-view="inventory">Inventory</button>
+        <button class="nav-link" data-view="backorders">Backorders <span id="backorder-count" class="badge">0</span></button>
         <button class="nav-link" data-view="purchase-orders">Purchase orders</button>
     </nav>
     <div id="session-actions"></div>
@@ -30,6 +31,12 @@
             <button class="secondary" id="refresh-inventory">Refresh</button></div>
         <div class="table-shell"><table><thead><tr><th>Item</th><th>Category</th><th>Version</th><th>Available</th><th></th></tr></thead>
             <tbody id="inventory-body"></tbody></table></div>
+    </section>
+
+    <section id="backorders" class="view content-section supplier-section hidden">
+        <div class="section-heading"><div><p class="eyebrow">WAITING FOR STOCK</p><h2>Backorders</h2></div>
+            <button class="secondary" id="refresh-backorders">Refresh</button></div>
+        <div id="backorder-list" class="purchase-order-list" aria-live="polite"></div>
     </section>
 
     <section id="purchase-orders" class="view content-section supplier-section hidden">

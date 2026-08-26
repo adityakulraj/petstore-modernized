@@ -40,12 +40,11 @@ sequenceDiagram
     participant Store as SupplierStore
     participant DB as MongoDB or Oracle
     Supplier->>UI: Enter absolute quantity and Update
-    UI->>API: PUT productId, quantity, expectedVersion, CSRF
+    UI->>API: PUT productId, quantity, expectedVersion, CSRF, Idempotency-Key
     API->>Store: replaceInventory(...)
     Store->>DB: Compare version and replace stock atomically
-    alt same request replay
-        DB-->>Store: Quantity already equals request
-        Store-->>API: Return current product without another write
+    alt completed command replay
+        DB-->>Store: Return stored stock/version result
     else competing writer won
         DB-->>Store: Version mismatch
         Store-->>API: HTTP 409; refresh required
@@ -56,9 +55,12 @@ sequenceDiagram
     API-->>UI: Render authoritative stock/version
 ```
 
-The endpoint uses PUT semantics. Repeating the identical absolute quantity is safe even with the original
-version, while attempting a different value with that stale version receives HTTP 409. Transient database
-failures use the existing bounded exponential-jitter retry policy and appear in database telemetry.
+The endpoint uses PUT semantics plus a durable command key. Repeating the same `Idempotency-Key` and payload
+returns the originally committed stock/version result; reusing that key for a different request receives HTTP 409.
+A new command that attempts a different value with a stale product version also receives HTTP 409. Transient
+database failures use the existing bounded exponential-jitter retry policy and appear in database telemetry.
+Replenishment also checks waiting backorders transactionally; see the dedicated
+[backorder and replenishment design](feature-backorder-replenishment.md).
 
 ## 3. Storefront order to supplier purchase order
 
@@ -122,7 +124,7 @@ observability dashboard.
 
 1. Sign in to the storefront as `alice` / `petstore-demo`, add one pet, and place an order.
 2. Sign out, open `/supplier/`, and sign in as `supplier` / `supplier`.
-3. In **Inventory**, change one absolute quantity and click **Update**. Refresh to confirm it remains stored.
+3. In **Inventory**, change one absolute quantity and click **Update**. Refresh to confirm it remains stored. The browser supplies a unique command key automatically.
 4. Open **Purchase orders**. The storefront order appears once as `READY`.
 5. Click **Process purchase order**. It changes to `PROCESSED` and the customer's order changes to `COMPLETED`.
 6. Open `/admin/health.html` as `admin` / `admin` and inspect the `supplier.*` database operations and logs.

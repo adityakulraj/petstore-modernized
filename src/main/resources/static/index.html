@@ -12,8 +12,10 @@
     <a class="brand" href="#catalog" aria-label="PetStore home"><span>Pet</span>Store</a>
     <nav aria-label="Primary navigation">
         <button class="nav-link" data-view="catalog">Catalog</button>
+        <button id="my-list-nav" class="nav-link hidden" data-view="my-list">MyList <span id="favorite-count" class="badge">0</span></button>
         <button class="nav-link" data-view="cart">Cart <span id="cart-count" class="badge">0</span></button>
         <button class="nav-link" data-view="orders">Orders</button>
+        <button class="nav-link" data-view="notifications">Inbox <span id="notification-count" class="badge">0</span></button>
         <button class="nav-link" data-view="account">Account</button>
     </nav>
     <div id="session-actions"></div>
@@ -40,6 +42,13 @@
         <div id="product-grid" class="product-grid" aria-live="polite"></div>
     </section>
 
+    <section id="my-list" class="view content-section hidden">
+        <div class="section-heading">
+            <div><p class="eyebrow">SAVED FOR YOU</p><h2>MyList & recommendations</h2></div>
+        </div>
+        <div id="my-list-panel" aria-live="polite"></div>
+    </section>
+
     <section id="cart" class="view content-section hidden">
         <div class="section-heading"><div><p class="eyebrow">READY WHEN YOU ARE</p><h2>Your cart</h2></div></div>
         <div id="cart-panel"></div>
@@ -48,6 +57,11 @@
     <section id="orders" class="view content-section hidden">
         <div class="section-heading"><div><p class="eyebrow">PURCHASE HISTORY</p><h2>Your orders</h2></div></div>
         <div id="orders-panel"></div>
+    </section>
+
+    <section id="notifications" class="view content-section hidden">
+        <div class="section-heading"><div><p class="eyebrow">ORDER UPDATES</p><h2>Your inbox</h2></div></div>
+        <div id="notifications-panel" class="notification-list" aria-live="polite"></div>
     </section>
 
     <section id="account" class="view content-section hidden">

@@ -3,7 +3,7 @@
 ## Executive summary
 
 This project preserves the familiar catalog, cart, checkout, order-history,
-customer-account, administrator-approval, and supplier-fulfilment experience of the Oracle Java Pet Store while replacing its classic J2EE-era
+customer-account, administrator-approval, supplier-fulfilment, and customer order-notification experience of the Oracle Java Pet Store while replacing its classic J2EE-era
 application style with a Java 21, Spring Boot 4 modular monolith. The result is
 easier to run, test, observe, and evolve, without turning a small domain into a
 distributed system.
@@ -17,7 +17,7 @@ API and operations dashboard.
 
 This comparison was checked against the supplied PetStore 1.3.2 source tree at
 `/Users/adkunwar/Downloads/petstore1.3.2`. The modernization in this repository
-covers the customer storefront, customer account lifecycle, high-value order approval, supplier inventory, and supplier purchase-order processing. Remaining legacy applications and integrations are called out explicitly rather than presented as complete.
+covers the customer storefront, customer account lifecycle, atomic backorders and supplier replenishment, high-value order approval, supplier inventory, supplier purchase-order processing, and durable customer order notifications. Remaining legacy applications and integrations are called out explicitly rather than presented as complete.
 
 The source confirms a J2EE 1.3 architecture: four EAR applications
 (storefront, administrator, OPC, and supplier); a storefront EAR containing
@@ -44,9 +44,9 @@ Relevant legacy sources include:
 | Configuration | XML descriptors and JNDI names configure EJBs, JDBC, JMS, and server mappings. | Typed, externalized Spring configuration and environment variables. | The same artifact runs locally, in CI, and in containers without source edits. |
 | Deployment | Ant 1.4.1 produces and verifies multiple EARs for a J2EE server; Cloudscape is part of setup. | Docker Compose starts the app and one selected database profile. | Reproducible local setup and isolated, disposable E2E environments. |
 | Persistence | CMP EJBs and JNDI JDBC data sources. | One `StorefrontStore` contract with Oracle/JPA and MongoDB adapters. | Oracle remains supported while the data-store choice can evolve independently. |
-| Reliability | Transaction behavior may be implicit in framework/container boundaries. | Explicit transactions, optimistic versions, conditional stock changes, idempotent checkout/PO/decision handling, and serialized approval races. | Prevents lost updates, overselling, duplicate orders, duplicate fulfilment, and double inventory restoration. |
-| Security | Legacy authentication patterns and broad server configuration. | Spring Security form login/basic auth, CSRF protection for mutations, role-separated customer/admin routes, and restrictive response headers/CSP. | Safer demo defaults and a clearer migration path to enterprise OIDC. |
-| Workflow integration | JMS queues/topics and message-driven beans connect storefront, OPC, supplier, and mailer flows. | Approval and supplier fulfilment are synchronous, transactional application workflows; external mailer and payment integrations remain outside the current scope. | Preserves visible business outcomes with simpler local consistency while leaving true external boundaries explicit. |
+| Reliability | Transaction behavior may be implicit in framework/container boundaries. | Explicit transactions, optimistic versions, conditional stock changes, idempotent checkout/inventory/PO/decision handling, all-or-nothing backorder allocation, and serialized races. | Prevents lost updates, overselling, partial reservations, duplicate orders, duplicate fulfilment, and double inventory restoration. |
+| Security | Legacy authentication patterns and broad server configuration. | Spring Security form-login sessions for business workflows, Basic auth limited to read-only diagnostics, CSRF protection for mutations, role-separated customer/admin routes, and restrictive response headers/CSP. | Safer demo defaults, no cached-Basic role confusion, and a clearer migration path to enterprise OIDC. |
+| Workflow integration | JMS queues/topics and message-driven beans connect storefront, OPC, supplier, customer relations, and mailer flows. | Approval and supplier fulfilment are transactional workflows; a transactional notification outbox drives an in-app inbox/timeline with retry audit. External email and payment providers remain explicit adapters. | Preserves visible outcomes, prevents state/message divergence, and leaves true external boundaries replaceable. |
 | Observability | Logs and runtime state are often separate from the user workflow. | Correlation IDs, JSON logs, health probes, request/database telemetry, query diagnostics, and an admin dashboard. | Faster diagnosis without giving customers access to operational data. |
 | Quality gates | Manual verification is common for a sample application. | JUnit, integration tests, Playwright browser/API contracts, and GitHub Actions for both Oracle and MongoDB modes. | Regressions are caught consistently across both persistence implementations. |
 
@@ -69,7 +69,7 @@ one repeatable command, while CI uses the same application artifact.
 
 The code is grouped around the domain rather than around an application server:
 
-- `accounts`, `catalog`, `cart`, `orders`, and `supplier` contain their API and domain behavior.
+- `accounts`, `analytics`, `catalog`, `cart`, `mylist`, `orders`, and `supplier` contain their API and domain behavior.
 - `shared/application/StorefrontService` orchestrates business operations.
 - `StorefrontStore` is the persistence boundary.
 - `persistence/oracle` and `persistence/mongo` implement that boundary.
@@ -91,6 +91,9 @@ The modernization makes correctness rules explicit:
 - Order lines and shipping addresses are immutable purchase-time snapshots.
 - Orders below the configurable approval threshold are auto-approved; high-value orders wait in an admin queue.
 - Approval creates one supplier PO; denial atomically restores reserved stock exactly once.
+- If any line is unavailable, checkout reserves nothing and creates a durable `BACKORDERED` order instead of losing the customer's request.
+- Supplier replenishment checks waiting orders oldest first, allocates every line atomically, and returns released orders to the same approval policy.
+- A durable inventory-command idempotency key makes concurrent retries converge without resetting stock consumed by a prior backorder release.
 
 **Outcome:** concurrent customers cannot oversell inventory, overwrite another
 cart update, or accidentally place the same order twice.
@@ -159,10 +162,14 @@ outcomes.
 
 - Customer registration/profile persists contact details, default address, language/category, and display preferences using BCrypt password hashes; raw payment-card storage was intentionally not reproduced.
 - `/admin/orders.html` replaces the Java Web Start approval client with a responsive pending queue, audit history, and replay-safe approve/deny commands.
-- `/supplier/` replaces the separate supplier EAR with role-protected inventory and purchase-order screens.
+- `/admin/sales.html` restores the legacy date/category sales and revenue charts with explicit recognized-versus-pending semantics and item/SKU drilldown.
+- `/admin/catalog.html` adds role-protected item/SKU creation, metadata and price changes, publish/archive controls, and a durable audit trail while suppliers retain inventory ownership.
+- `/supplier/` replaces the separate supplier EAR with role-protected inventory, waiting-backorder, and purchase-order screens.
+- The storefront **Inbox** and per-order timeline replace opaque customer-relations mail hand-offs with durable events for backordered, inventory-allocated, pending, approved/denied, and completed orders.
+- The storefront **MyList** persists explicit customer favourites, derives deterministic recommendations from sibling variants and favourite categories, and restores item-level choices such as **Male Adult Bulldog** and **Female Puppy Bulldog**.
 - The original strict US policy is retained: totals below $500 auto-approve; totals at or above $500 require review.
 
-**Outcome:** the most visible account, approval, and supplier capabilities now run in the same deployable service while retaining role separation and transactional guarantees. Detailed approval diagrams and manual checks are in [feature-admin-order-approval.md](feature-admin-order-approval.md).
+**Outcome:** the most visible account, personalized catalogue, catalog/pricing, approval, sales analytics, supplier, and customer-relations capabilities now run in the same deployable service while retaining role separation and transactional guarantees. Detailed approval diagrams are in [feature-admin-order-approval.md](feature-admin-order-approval.md), catalog diagrams are in [feature-catalog-price-management.md](feature-catalog-price-management.md), analytics diagrams are in [feature-sales-revenue-analytics.md](feature-sales-revenue-analytics.md), backorder/replenishment diagrams are in [feature-backorder-replenishment.md](feature-backorder-replenishment.md), notification/outbox diagrams are in [feature-customer-notifications.md](feature-customer-notifications.md), and MyList/item diagrams are in [feature-mylist-and-item-variants.md](feature-mylist-and-item-variants.md).
 
 The complete Oracle relational model, MongoDB document model, primary/foreign/logical keys, column dictionaries, and cross-store mapping are documented in [database-schema.md](database-schema.md).
 
@@ -172,7 +179,7 @@ The complete Oracle relational model, MongoDB document model, primary/foreign/lo
 |---|---|
 | Easier developer setup | Maven Wrapper, Java 21, and Compose profiles replace server-specific setup. |
 | Clearer operational visibility | Health probes, request IDs, structured logs, protected log search, telemetry API, and dashboard. |
-| Better data safety | Optimistic locking, conditional inventory updates, transactions, and idempotency. |
+| Better data safety | Optimistic locking, conditional inventory updates, transactions, idempotency, and a transactional notification outbox. |
 | Lower migration risk | One business contract, Oracle and Mongo adapters, and E2E parity tests. |
 | Better security posture | Spring Security, CSRF, roles, CSP/headers, and restricted admin diagnostics. |
 | Stronger release confidence | Unit, integration, browser, and API tests run in CI for both data stores. |

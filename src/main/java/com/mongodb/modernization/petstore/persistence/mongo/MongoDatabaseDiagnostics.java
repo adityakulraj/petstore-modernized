@@ -40,6 +40,10 @@ class MongoDatabaseDiagnostics implements DatabaseDiagnostics {
                             new Document("customerId", "alice").append("idempotencyKey", "diagnostic"), null),
                     explain("orders.by_customer", "orders", new Document("customerId", "alice"),
                             new Document("createdAt", -1)),
+                    explain("admin.analytics.sales", "orders", new Document("createdAt",
+                            new Document("$gte", java.util.Date.from(Instant.parse("2026-08-01T00:00:00Z")))
+                                    .append("$lt", java.util.Date.from(Instant.parse("2026-09-01T00:00:00Z")))),
+                            new Document("createdAt", 1)),
                     explain("inventory.conditional_decrement", "products",
                             new Document("_id", "AV-CB-01").append("stock", new Document("$gte", 1)), null));
             cached = new QueryPlanReport(Instant.now(), plans);

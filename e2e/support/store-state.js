@@ -4,6 +4,7 @@ const SEED_STOCK = Object.freeze({
   'FI-SW-01': 25,
   'FI-SW-02': 12,
   'K9-BD-01': 4,
+  'K9-BD-02': 4,
   'K9-RT-01': 5,
   'FL-DSH-01': 8,
   'AV-CB-01': 10,
@@ -36,13 +37,18 @@ function composeExec(project, service, command, input) {
 
 function resetMongo(project) {
   const updates = Object.entries(SEED_STOCK)
-    .map(([id, stock]) => `db.products.updateOne({_id:${JSON.stringify(id)}},{$set:{stock:${stock},version:NumberLong(0)}});`)
+    .map(([id, stock]) => `db.products.updateOne({_id:${JSON.stringify(id)}},{$set:{stock:${stock},active:true,version:NumberLong(0)}});`)
     .join('');
   const script = `
     db.carts.deleteMany({});
+    db.customerNotifications.deleteMany({});
+    db.favoriteItems.deleteMany({});
+    db.supplierInventoryCommands.deleteMany({});
     db.supplierPurchaseOrders.deleteMany({});
     db.orders.deleteMany({});
+    db.catalogChanges.deleteMany({});
     db.customerAccounts.deleteMany({_id: {$nin: ['alice', 'aditya']}});
+    db.products.deleteMany({_id: {$nin: ${JSON.stringify(Object.keys(SEED_STOCK))}}});
     ${updates}
     if (db.products.countDocuments({}) !== ${Object.keys(SEED_STOCK).length}) {
       throw new Error('Unexpected seeded product count');
@@ -57,15 +63,21 @@ function resetOracle(project) {
     .join(' ');
   const sql = `
     WHENEVER SQLERROR EXIT SQL.SQLCODE
+    DELETE FROM PS_CUSTOMER_NOTIFICATION;
+    DELETE FROM PS_FAVORITE_ITEM;
+    DELETE FROM PS_SUPPLIER_INV_COMMAND;
     DELETE FROM PS_SUPPLIER_PO_LINE;
     DELETE FROM PS_SUPPLIER_PO;
     DELETE FROM PS_ORDER_LINE;
     DELETE FROM PS_ORDER;
     DELETE FROM PS_CART_LINE;
     DELETE FROM PS_CART;
+    DELETE FROM PS_CATALOG_CHANGE;
     DELETE FROM PS_CUSTOMER_ACCOUNT WHERE USERNAME NOT IN ('alice', 'aditya');
+    DELETE FROM PS_PRODUCT WHERE ID NOT IN (${Object.keys(SEED_STOCK).map(id => `'${id}'`).join(',')});
     UPDATE PS_PRODUCT
       SET STOCK = CASE ID ${cases} END,
+          ACTIVE = TRUE,
           VERSION = 0
       WHERE ID IN (${Object.keys(SEED_STOCK).map(id => `'${id}'`).join(',')});
     COMMIT;

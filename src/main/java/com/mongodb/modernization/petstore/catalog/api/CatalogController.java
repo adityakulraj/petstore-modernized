@@ -25,7 +25,7 @@ public class CatalogController {
         var products = storefront.products(category).stream();
         if (query != null && !query.isBlank()) {
             var needle = query.toLowerCase(Locale.ROOT).trim();
-            products = products.filter(product -> (product.name() + " " + product.description())
+            products = products.filter(product -> (product.variantName() + " " + product.name() + " " + product.description())
                     .toLowerCase(Locale.ROOT).contains(needle));
         }
         return products.toList();

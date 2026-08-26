@@ -16,7 +16,7 @@ public record CartLine(String productId, String productName, BigDecimal unitPric
     }
 
     public static CartLine from(Product product, int quantity) {
-        return new CartLine(product.id(), product.name(), product.price(), quantity);
+        return new CartLine(product.id(), product.displayName(), product.price(), quantity);
     }
 
     public BigDecimal subtotal() {

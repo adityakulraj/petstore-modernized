@@ -23,6 +23,8 @@ app:
   supplier:
     username: ${SUPPLIER_USERNAME:supplier}
     password: ${SUPPLIER_PASSWORD:supplier}
+  notifications:
+    poll-interval: ${NOTIFICATION_POLL_INTERVAL:1s}
   database:
     pool:
       min-size: ${DB_POOL_MIN_SIZE:1}

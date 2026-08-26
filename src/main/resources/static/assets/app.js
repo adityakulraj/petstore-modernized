@@ -1,4 +1,4 @@
-const state = { products: [], cart: null, session: null, csrf: null };
+const state = { products: [], cart: null, notifications: [], myList: null, session: null, csrf: null, variantSelections: {} };
 const petIcons = { FISH: '🐠', DOGS: '🐕', CATS: '🐈', BIRDS: '🦜', REPTILES: '🦎' };
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -9,7 +9,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.querySelector('#checkout-form').addEventListener('submit', checkout);
   document.querySelector('#account-form').addEventListener('submit', saveAccount);
   await Promise.all([loadCatalog(), loadSession()]);
-  if (state.session?.authenticated) await loadCart();
+  if (isCustomer()) await Promise.all([loadCart(), loadNotifications(), loadMyList()]);
 });
 
 async function api(path, options = {}) {
@@ -39,13 +39,15 @@ async function loadCatalog() {
 }
 async function loadSession() {
   state.session = await api('/api/v1/session').catch(() => ({ authenticated: false }));
-  const operations = state.session.admin ? ' · <a class="login-link" href="/admin/orders.html">Approvals</a> · <a class="login-link" href="/admin/health.html">Health</a>' : '';
+  const operations = state.session.admin ? ' · <a class="login-link" href="/admin/orders.html">Approvals</a> · <a class="login-link" href="/admin/sales.html">Sales</a> · <a class="login-link" href="/admin/health.html">Health</a>' : '';
   document.querySelector('#session-actions').innerHTML = state.session.authenticated
     ? `<span>Hi, ${escapeHtml(state.session.username)}</span> · <button id="open-account" class="login-link nav-link">Account</button>${operations} · <button id="sign-out" class="login-link nav-link">Sign out</button>`
     : '<a class="login-link" href="/login">Sign in</a> · <button id="open-account" class="login-link nav-link">Create account</button>';
   document.querySelector('#sign-out')?.addEventListener('click', signOut);
   document.querySelector('#open-account')?.addEventListener('click', () => show('account'));
+  document.querySelector('#my-list-nav').classList.toggle('hidden', !isCustomer());
 }
+function isCustomer() { return state.session?.authenticated && !state.session.admin && !state.session.supplier; }
 async function signOut() {
   if (!state.csrf) state.csrf = await fetch('/api/v1/csrf').then(r => r.json());
   await fetch('/logout', { method: 'POST', credentials: 'same-origin', headers: { [state.csrf.headerName]: state.csrf.token } });
@@ -56,12 +58,73 @@ async function loadCart() { state.cart = await api('/api/v1/cart'); renderCart()
 function renderProducts() {
   const query = document.querySelector('#search').value.toLowerCase().trim();
   const category = document.querySelector('#category').value;
-  const filtered = state.products.filter(p => (!category || p.categoryId === category) && (!query || `${p.name} ${p.description}`.toLowerCase().includes(query)));
-  document.querySelector('#product-grid').innerHTML = filtered.map(p => `<article class="product-card">
-    <div class="pet-art" aria-hidden="true">${petIcons[p.categoryId] || '🐾'}</div><div class="product-copy"><span class="eyebrow">${escapeHtml(p.categoryName)} · ${p.stock} AVAILABLE</span>
-    <h3>${escapeHtml(p.name)}</h3><p>${escapeHtml(p.description)}</p><div class="card-bottom"><span class="price">${money(p.price)}</span>
-    <button class="add-button" data-add="${escapeHtml(p.id)}" ${p.stock < 1 ? 'disabled' : ''}>Add to cart</button></div></div></article>`).join('') || '<p class="empty">No pets match that search.</p>';
-  document.querySelectorAll('[data-add]').forEach(button => button.addEventListener('click', () => addToCart(button.dataset.add)));
+  const groups = [...groupProducts(state.products).entries()]
+    .filter(([, variants]) => (!category || variants[0].categoryId === category)
+      && (!query || variants.some(p => `${p.variantName} ${p.name} ${p.description}`.toLowerCase().includes(query))));
+  document.querySelector('#product-grid').innerHTML = groups.map(([groupId, variants]) => {
+    const selected = variants.find(item => item.id === state.variantSelections[groupId]) || variants[0];
+    state.variantSelections[groupId] = selected.id;
+    const favorite = state.myList?.favorites.some(item => item.id === selected.id);
+    const selector = variants.length > 1 ? `<label class="variant-picker">Choose item variant<select data-variant="${escapeHtml(groupId)}">
+      ${variants.map(item => `<option value="${escapeHtml(item.id)}" ${item.id === selected.id ? 'selected' : ''}>${escapeHtml(item.variantName)} · ${money(item.price)} · ${item.stock} available</option>`).join('')}
+    </select></label>` : '';
+    return `<article class="product-card" data-product-group="${escapeHtml(groupId)}">
+      <div class="pet-art" aria-hidden="true">${petIcons[selected.categoryId] || '🐾'}</div><div class="product-copy">
+      <div class="product-meta"><span class="eyebrow">${escapeHtml(selected.categoryName)} · ${selected.stock} AVAILABLE</span>
+      <button class="favorite-button ${favorite ? 'selected' : ''}" data-favorite-group="${escapeHtml(groupId)}" aria-label="${favorite ? 'Remove from' : 'Add to'} MyList">${favorite ? '♥' : '♡'}</button></div>
+      <h3>${escapeHtml(selected.name)}</h3><p>${escapeHtml(selected.description)}</p>${selector}
+      <div class="card-bottom"><span class="price">${money(selected.price)}</span>
+      <button class="add-button" data-add-group="${escapeHtml(groupId)}">${selected.stock < 1 ? 'Backorder' : 'Add to cart'}</button></div></div></article>`;
+  }).join('') || '<p class="empty">No pets match that search.</p>';
+  document.querySelectorAll('[data-variant]').forEach(select => select.addEventListener('change', () => {
+    state.variantSelections[select.dataset.variant] = select.value; renderProducts();
+  }));
+  document.querySelectorAll('[data-add-group]').forEach(button => button.addEventListener('click', () => addToCart(state.variantSelections[button.dataset.addGroup])));
+  document.querySelectorAll('[data-favorite-group]').forEach(button => button.addEventListener('click', () => toggleFavorite(state.variantSelections[button.dataset.favoriteGroup])));
+}
+
+async function loadMyList() {
+  if (!isCustomer()) return;
+  state.myList = await api('/api/v1/my-list');
+  document.querySelector('#favorite-count').textContent = state.myList.favorites.length;
+  renderMyList(); renderProducts();
+}
+async function toggleFavorite(itemId) {
+  if (!isCustomer()) { location.href = '/login'; return; }
+  const favorite = state.myList?.favorites.some(item => item.id === itemId);
+  try {
+    state.myList = await api(`/api/v1/my-list/items/${encodeURIComponent(itemId)}`, { method: favorite ? 'DELETE' : 'POST' });
+    document.querySelector('#favorite-count').textContent = state.myList.favorites.length;
+    renderMyList(); renderProducts(); toast(favorite ? 'Removed from MyList.' : 'Saved to MyList.');
+  } catch (error) { toast(error.message, true); await loadMyList().catch(() => {}); }
+}
+function renderMyList() {
+  const panel = document.querySelector('#my-list-panel');
+  if (!state.myList) { panel.innerHTML = '<p class="empty">Sign in to build your personal list.</p>'; return; }
+  const preference = state.myList.enabled ? '' : '<p class="preference-note">Personal recommendations are paused. Enable “Keep a personal pet list” in Account to turn them back on; saved items are preserved.</p>';
+  const favorites = state.myList.favorites.length ? itemCards(state.myList.favorites, true) : '<p class="empty">Use the heart on any catalogue item to save it here.</p>';
+  const recommendations = state.myList.enabled
+    ? (state.myList.recommendations.length ? itemCards(state.myList.recommendations, false) : '<p class="empty">Save an item to improve your recommendations.</p>') : '';
+  panel.innerHTML = `${preference}<h3 class="list-heading">Your favourites</h3>${favorites}
+    ${state.myList.enabled ? `<h3 class="list-heading">Recommended for you</h3>${recommendations}` : ''}`;
+  panel.querySelectorAll('[data-list-add]').forEach(button => button.addEventListener('click', () => addToCart(button.dataset.listAdd)));
+  panel.querySelectorAll('[data-list-favorite]').forEach(button => button.addEventListener('click', () => toggleFavorite(button.dataset.listFavorite)));
+}
+function itemCards(products, saved) {
+  return `<div class="recommendation-grid">${products.map(product => `<article class="recommendation-card">
+    <span class="recommendation-icon" aria-hidden="true">${petIcons[product.categoryId] || '🐾'}</span><div>
+    <span class="eyebrow">${escapeHtml(product.categoryName)} · ${product.stock} AVAILABLE</span><h4>${escapeHtml(productDisplayName(product))}</h4>
+    <p>${escapeHtml(product.description)}</p><strong>${money(product.price)}</strong></div><div class="recommendation-actions">
+    <button class="favorite-button ${saved ? 'selected' : ''}" data-list-favorite="${escapeHtml(product.id)}" aria-label="${saved ? 'Remove from' : 'Add to'} MyList">${saved ? '♥' : '♡'}</button>
+    <button class="add-button" data-list-add="${escapeHtml(product.id)}">${product.stock < 1 ? 'Backorder' : 'Add to cart'}</button></div></article>`).join('')}</div>`;
+}
+function productDisplayName(product) { return !product.variantName || product.variantName === 'Standard' ? product.name : `${product.variantName} ${product.name}`; }
+function groupProducts(products) {
+  return products.reduce((groups, product) => {
+    if (!groups.has(product.productGroupId)) groups.set(product.productGroupId, []);
+    groups.get(product.productGroupId).push(product);
+    return groups;
+  }, new Map());
 }
 
 async function addToCart(productId) {
@@ -101,17 +164,67 @@ async function checkout(event) {
   const submit = event.currentTarget.querySelector('[type=submit]'); submit.disabled = true;
   try {
     const order = await api('/api/v1/orders', { method:'POST', headers:{'Idempotency-Key':idempotencyKey}, body:JSON.stringify({ expectedCartVersion:state.cart.version, address }) });
-    const message = order.status === 'PENDING'
-      ? `Order ${order.id.slice(0,8)} placed and is awaiting administrator approval.`
-      : `Order ${order.id.slice(0,8)} placed. Supplier fulfilment started.`;
+    const message = order.status === 'BACKORDERED'
+      ? `Order ${order.id.slice(0,8)} is backordered and will resume automatically after replenishment.`
+      : order.status === 'PENDING'
+        ? `Order ${order.id.slice(0,8)} placed and is awaiting administrator approval.`
+        : `Order ${order.id.slice(0,8)} placed. Supplier fulfilment started.`;
     document.querySelector('#checkout-dialog').close(); toast(message); await Promise.all([loadCatalog(), loadCart(), loadOrders()]); show('orders');
   } catch (error) { await recoverCart(error); } finally { submit.disabled = false; }
 }
 async function loadOrders() {
   if (!state.session?.authenticated) return;
-  const orders = await api('/api/v1/orders');
+  const [orders] = await Promise.all([api('/api/v1/orders'), loadNotifications()]);
   document.querySelector('#orders-panel').innerHTML = orders.map(order => `<article class="order-card"><div><span class="eyebrow">${new Date(order.createdAt).toLocaleString()}</span><h3>Order ${escapeHtml(order.id.slice(0,8))}</h3></div><strong>${money(order.total)} · ${escapeHtml(order.status)}</strong>
-    <div class="order-lines">${order.lines.map(line => `${escapeHtml(line.productName)} × ${line.quantity}`).join(' · ')}</div></article>`).join('') || '<p class="empty">No orders yet.</p>';
+    <div class="order-lines">${order.lines.map(line => `${escapeHtml(line.productName)} × ${line.quantity}`).join(' · ')}</div>
+    ${renderTimeline(order.id)}</article>`).join('') || '<p class="empty">No orders yet.</p>';
+}
+async function loadNotifications() {
+  if (!state.session?.authenticated || state.session.admin || state.session.supplier) return [];
+  state.notifications = await api('/api/v1/notifications');
+  document.querySelector('#notification-count').textContent = state.notifications.filter(item => !item.readAt).length;
+  renderNotifications();
+  return state.notifications;
+}
+function renderNotifications() {
+  const panel = document.querySelector('#notifications-panel');
+  panel.innerHTML = state.notifications.map(item => `<article class="notification-card ${item.readAt ? '' : 'unread'}">
+    <div class="notification-icon" aria-hidden="true">${notificationIcon(item.type)}</div>
+    <div><span class="eyebrow">${new Date(item.createdAt).toLocaleString()} · ${escapeHtml(item.deliveryStatus)}</span>
+      <h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.message)}</p></div>
+    ${item.readAt ? '<span class="read-label">Read</span>' : `<button class="mark-read" data-read="${escapeHtml(item.id)}" data-version="${item.version}">Mark read</button>`}
+  </article>`).join('') || '<p class="empty">No order updates yet.</p>';
+  document.querySelectorAll('[data-read]').forEach(button => button.addEventListener('click', () => markRead(button)));
+}
+function renderTimeline(orderId) {
+  const events = state.notifications.filter(item => item.orderId === orderId).sort((a,b) => new Date(a.createdAt) - new Date(b.createdAt));
+  if (!events.length) return '';
+  return `<ol class="order-timeline">${events.map(item => `<li class="complete"><span>${notificationIcon(item.type)}</span><div><strong>${escapeHtml(item.title)}</strong><small>${new Date(item.createdAt).toLocaleString()}</small></div></li>`).join('')}</ol>`;
+}
+async function markRead(button) {
+  const notificationId = button.dataset.read;
+  button.disabled = true;
+  try {
+    try {
+      await api(`/api/v1/notifications/${encodeURIComponent(notificationId)}/read`, {
+        method: 'POST', body: JSON.stringify({ expectedVersion: Number(button.dataset.version) })
+      });
+    } catch (firstFailure) {
+      const refreshed = await loadNotifications();
+      const current = refreshed.find(item => item.id === notificationId);
+      if (!current || current.readAt) return;
+      await api(`/api/v1/notifications/${encodeURIComponent(notificationId)}/read`, {
+        method: 'POST', body: JSON.stringify({ expectedVersion: current.version })
+      });
+    }
+    await loadNotifications();
+  } catch (error) {
+    await loadNotifications().catch(() => {});
+    toast(error.message, true);
+  } finally { button.disabled = false; }
+}
+function notificationIcon(type) {
+  return ({ORDER_BACKORDERED:'↻', ORDER_INVENTORY_ALLOCATED:'✓', ORDER_PENDING:'⏳', ORDER_APPROVED:'✓', ORDER_DENIED:'×', ORDER_COMPLETED:'📦'})[type] || '•';
 }
 async function loadAccount() {
   const form = document.querySelector('#account-form');
@@ -154,15 +267,17 @@ async function saveAccount(event) {
     const account = await api(state.session?.authenticated ? '/api/v1/accounts/me' : '/api/v1/accounts',
       { method: state.session?.authenticated ? 'PUT' : 'POST', body: JSON.stringify(body) });
     if (!state.session?.authenticated) { toast(`Account ${account.username} created. Please sign in.`); location.href = '/login'; return; }
-    toast('Account updated.');
+    toast('Account updated.'); await loadMyList();
   } catch (error) { toast(error.message, true); }
 }
 async function show(view) {
-  if ((view === 'cart' || view === 'orders') && !state.session?.authenticated) { location.href='/login'; return; }
-  document.querySelectorAll('.view').forEach(section => section.classList.toggle('hidden', section.id !== view));
+  if ((view === 'cart' || view === 'orders' || view === 'notifications' || view === 'my-list') && !state.session?.authenticated) { location.href='/login'; return; }
   if (view === 'cart') await loadCart().catch(error => toast(error.message,true));
   if (view === 'orders') await loadOrders().catch(error => toast(error.message,true));
+  if (view === 'notifications') await loadNotifications().catch(error => toast(error.message,true));
+  if (view === 'my-list') await loadMyList().catch(error => toast(error.message,true));
   if (view === 'account') await loadAccount().catch(error => toast(error.message,true));
+  document.querySelectorAll('.view').forEach(section => section.classList.toggle('hidden', section.id !== view));
   document.querySelector(`#${view}`)?.scrollIntoView({ behavior:'smooth', block:'start' });
 }
 function toast(message, error=false) { const el=document.querySelector('#toast'); el.textContent=message; el.className=error?'show error':'show'; setTimeout(()=>el.className='',3500); }

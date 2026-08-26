@@ -1,8 +1,11 @@
 package com.mongodb.modernization.petstore.persistence.mongo;
 
 import com.mongodb.modernization.petstore.catalog.domain.Product;
+import com.mongodb.modernization.petstore.config.AppProperties;
 import com.mongodb.modernization.petstore.observability.DatabaseExecutor;
 import com.mongodb.modernization.petstore.orders.domain.Order;
+import com.mongodb.modernization.petstore.notifications.application.CustomerNotificationStore;
+import com.mongodb.modernization.petstore.notifications.domain.CustomerNotification;
 import com.mongodb.modernization.petstore.shared.application.NotFoundException;
 import com.mongodb.modernization.petstore.shared.application.StoreConflictException;
 import com.mongodb.modernization.petstore.supplier.application.SupplierStore;
@@ -21,6 +24,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.List;
 
@@ -29,20 +33,29 @@ import java.util.List;
 class MongoSupplierStore implements SupplierStore {
     private final MongoProductRepository products;
     private final MongoSupplierPurchaseOrderRepository purchaseOrders;
+    private final MongoOrderRepository orders;
+    private final MongoSupplierInventoryCommandRepository inventoryCommands;
     private final MongoTemplate template;
     private final TransactionTemplate transactions;
     private final DatabaseExecutor database;
+    private final CustomerNotificationStore notifications;
+    private final BigDecimal approvalThreshold;
     private final Clock clock = Clock.systemUTC();
 
     MongoSupplierStore(MongoProductRepository products, MongoSupplierPurchaseOrderRepository purchaseOrders,
+                       MongoOrderRepository orders, MongoSupplierInventoryCommandRepository inventoryCommands,
                        MongoTemplate template,
                        @Qualifier("mongoTransactionManager") PlatformTransactionManager transactionManager,
-                       DatabaseExecutor database) {
+                       DatabaseExecutor database, CustomerNotificationStore notifications, AppProperties properties) {
         this.products = products;
         this.purchaseOrders = purchaseOrders;
+        this.orders = orders;
+        this.inventoryCommands = inventoryCommands;
         this.template = template;
         this.transactions = new TransactionTemplate(transactionManager);
         this.database = database;
+        this.notifications = notifications;
+        this.approvalThreshold = properties.admin().approvalThreshold();
     }
 
     @Override
@@ -52,22 +65,90 @@ class MongoSupplierStore implements SupplierStore {
     }
 
     @Override
-    public Product replaceInventory(String productId, long expectedVersion, int quantity) {
-        return database.execute("supplier.inventory.replace", true, () -> transactions.execute(ignored -> {
+    public Product replaceInventory(String productId, long expectedVersion, int quantity, String idempotencyKey) {
+        try {
+            return database.execute("supplier.inventory.replace", true, () -> transactions.execute(ignored -> {
+            var replay = inventoryCommands.findById(idempotencyKey);
+            if (replay.isPresent()) return replayProduct(replay.get(), productId, expectedVersion, quantity);
             var current = products.findById(productId)
                     .orElseThrow(() -> new NotFoundException("Unknown product " + productId));
-            if (current.stock == quantity) return current.toDomain(); // identical PUT replay
-            if ((current.version == null ? 0 : current.version) != expectedVersion) {
+            if (current.stock != quantity && (current.version == null ? 0 : current.version) != expectedVersion) {
                 throw new StoreConflictException("Inventory changed in another request; refresh and retry");
             }
-            var query = Query.query(Criteria.where("_id").is(productId).and("version").is(current.version));
-            var updated = template.updateFirst(query, new Update().set("stock", quantity).inc("version", 1),
-                    ProductDocument.class);
-            if (updated.getModifiedCount() != 1) {
-                throw new StoreConflictException("Inventory changed in another request; refresh and retry");
+            if (current.stock != quantity) {
+                var query = Query.query(Criteria.where("_id").is(productId).and("version").is(current.version));
+                var updated = template.updateFirst(query, new Update().set("stock", quantity).inc("version", 1),
+                        ProductDocument.class);
+                if (updated.getModifiedCount() != 1) {
+                    throw new StoreConflictException("Inventory changed in another request; refresh and retry");
+                }
             }
-            return products.findById(productId).orElseThrow().toDomain();
-        }));
+            releaseBackorders();
+            var result = products.findById(productId).orElseThrow().toDomain();
+            inventoryCommands.insert(new SupplierInventoryCommandDocument(idempotencyKey, productId,
+                    expectedVersion, quantity, result.stock(), result.version(), Instant.now(clock)));
+            return result;
+            }));
+        } catch (DataIntegrityViolationException race) {
+            return database.execute("supplier.inventory.replay", true, () -> inventoryCommands.findById(idempotencyKey)
+                    .map(command -> replayProduct(command, productId, expectedVersion, quantity))
+                    .orElseThrow(() -> race));
+        }
+    }
+
+    @Override
+    public List<Order> backorders() {
+        return database.execute("supplier.backorders.all", true, () -> orders
+                .findByStatusOrderByCreatedAtAsc(Order.BACKORDERED).stream().map(OrderDocument::toDomain).toList());
+    }
+
+    private Product replayProduct(SupplierInventoryCommandDocument command, String productId,
+                                  long expectedVersion, int quantity) {
+        if (!command.matches(productId, expectedVersion, quantity)) {
+            throw new StoreConflictException("Idempotency key was already used for a different inventory command");
+        }
+        var current = products.findById(productId)
+                .orElseThrow(() -> new NotFoundException("Unknown product " + productId)).toDomain();
+        return new Product(current.id(), current.productGroupId(), current.variantName(), current.categoryId(),
+                current.categoryName(), current.name(), current.description(), current.price(),
+                command.resultStock, command.resultVersion);
+    }
+
+    private void releaseBackorders() {
+        for (var document : orders.findByStatusOrderByCreatedAtAsc(Order.BACKORDERED)) {
+            if (!inventoryAvailable(document)) continue;
+            for (var line : document.lines) {
+                var reserved = template.updateFirst(Query.query(Criteria.where("_id").is(line.productId)
+                                .and("stock").gte(line.quantity)),
+                        new Update().inc("stock", -line.quantity).inc("version", 1), ProductDocument.class);
+                if (reserved.getModifiedCount() != 1) {
+                    throw new OptimisticLockingFailureException("Inventory changed while allocating a backorder");
+                }
+            }
+            var order = document.toDomain();
+            var nextStatus = order.statusAfterInventoryAllocation(approvalThreshold);
+            var advanced = template.updateFirst(Query.query(Criteria.where("_id").is(document.id)
+                            .and("status").is(Order.BACKORDERED).and("version").is(document.version)),
+                    new Update().set("status", nextStatus).inc("version", 1), OrderDocument.class);
+            if (advanced.getModifiedCount() != 1) {
+                throw new OptimisticLockingFailureException("Backorder changed while allocating inventory");
+            }
+            var released = orders.findById(document.id).orElseThrow().toDomain();
+            var occurredAt = Instant.now(clock);
+            notifications.enqueue(released, CustomerNotification.Type.ORDER_INVENTORY_ALLOCATED, occurredAt);
+            notifications.enqueue(released, Order.PENDING.equals(nextStatus)
+                    ? CustomerNotification.Type.ORDER_PENDING : CustomerNotification.Type.ORDER_APPROVED,
+                    occurredAt.plusMillis(1));
+            if (Order.APPROVED.equals(nextStatus)) {
+                purchaseOrders.findByOrderId(released.id()).orElseGet(() -> purchaseOrders.insert(
+                        new SupplierPurchaseOrderDocument(SupplierPurchaseOrder.ready(released))));
+            }
+        }
+    }
+
+    private boolean inventoryAvailable(OrderDocument order) {
+        return order.lines.stream().allMatch(line -> products.findById(line.productId)
+                .map(product -> product.stock >= line.quantity).orElse(false));
     }
 
     @Override
@@ -96,21 +177,38 @@ class MongoSupplierStore implements SupplierStore {
             return database.execute("supplier.purchase_order.process", true, () -> transactions.execute(ignored -> {
                 var document = purchaseOrders.findById(purchaseOrderId)
                         .orElseThrow(() -> new NotFoundException("Unknown supplier purchase order " + purchaseOrderId));
-                if (document.status == SupplierPurchaseOrder.Status.PROCESSED) return document.toDomain();
+                if (document.status == SupplierPurchaseOrder.Status.PROCESSED) {
+                    ensureCompletedNotification(document);
+                    return document.toDomain();
+                }
                 long actualVersion = document.version == null ? 0 : document.version;
                 if (actualVersion != expectedVersion) {
                     throw new StoreConflictException("Purchase order changed in another request; refresh and retry");
                 }
                 document.markProcessed(Instant.now(clock));
                 var processed = purchaseOrders.save(document).toDomain();
-                template.updateFirst(Query.query(Criteria.where("_id").is(document.orderId)
+                var completed = template.updateFirst(Query.query(Criteria.where("_id").is(document.orderId)
                                 .and("status").is(Order.APPROVED)),
                         Update.update("status", Order.COMPLETED).inc("version", 1), OrderDocument.class);
+                if (completed.getModifiedCount() != 1) {
+                    throw new StoreConflictException("Customer order was not ready for supplier completion");
+                }
+                ensureCompletedNotification(document);
                 return processed;
             }));
         } catch (OptimisticLockingFailureException conflict) {
             return processedReplay(purchaseOrderId, conflict);
         }
+    }
+
+    private void ensureCompletedNotification(SupplierPurchaseOrderDocument purchaseOrder) {
+        var order = orders.findById(purchaseOrder.orderId)
+                .orElseThrow(() -> new NotFoundException("Unknown order " + purchaseOrder.orderId)).toDomain();
+        if (!Order.COMPLETED.equals(order.status())) {
+            throw new StoreConflictException("Customer order was not completed with the supplier purchase order");
+        }
+        notifications.enqueue(order, CustomerNotification.Type.ORDER_COMPLETED,
+                purchaseOrder.processedAt == null ? Instant.now(clock) : purchaseOrder.processedAt);
     }
 
     private SupplierPurchaseOrder processedReplay(String purchaseOrderId, RuntimeException conflict) {

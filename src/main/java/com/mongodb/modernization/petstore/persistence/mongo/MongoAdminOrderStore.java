@@ -3,6 +3,8 @@ package com.mongodb.modernization.petstore.persistence.mongo;
 import com.mongodb.modernization.petstore.observability.DatabaseExecutor;
 import com.mongodb.modernization.petstore.orders.application.AdminOrderStore;
 import com.mongodb.modernization.petstore.orders.domain.Order;
+import com.mongodb.modernization.petstore.notifications.application.CustomerNotificationStore;
+import com.mongodb.modernization.petstore.notifications.domain.CustomerNotification;
 import com.mongodb.modernization.petstore.shared.application.NotFoundException;
 import com.mongodb.modernization.petstore.shared.application.StoreConflictException;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -26,15 +28,17 @@ class MongoAdminOrderStore implements AdminOrderStore {
     private final MongoTemplate template;
     private final TransactionTemplate transactions;
     private final DatabaseExecutor database;
+    private final CustomerNotificationStore notifications;
     private final Clock clock = Clock.systemUTC();
 
     MongoAdminOrderStore(MongoOrderRepository orders, MongoTemplate template,
                          @Qualifier("mongoTransactionManager") PlatformTransactionManager transactionManager,
-                         DatabaseExecutor database) {
+                         DatabaseExecutor database, CustomerNotificationStore notifications) {
         this.orders = orders;
         this.template = template;
         this.transactions = new TransactionTemplate(transactionManager);
         this.database = database;
+        this.notifications = notifications;
     }
 
     @Override
@@ -52,7 +56,11 @@ class MongoAdminOrderStore implements AdminOrderStore {
     private Order reviewOnce(String orderId, long expectedVersion, Decision decision, String reviewer) {
         var current = orders.findById(orderId)
                 .orElseThrow(() -> new NotFoundException("Unknown order " + orderId));
-        if (compatible(current.status, decision)) return current.toDomain();
+        if (compatible(current.status, decision)) {
+            var replay = current.toDomain();
+            enqueueDecision(replay, decision);
+            return replay;
+        }
         if (!Order.PENDING.equals(current.status)) {
             throw new StoreConflictException("Only pending orders can be approved or denied");
         }
@@ -67,11 +75,16 @@ class MongoAdminOrderStore implements AdminOrderStore {
                 : Criteria.where("version").is(expectedVersion);
         var query = Query.query(new Criteria().andOperator(Criteria.where("_id").is(orderId),
                 Criteria.where("status").is(Order.PENDING), version));
-        var update = new Update().set("status", decision.name()).set("reviewedAt", Instant.now(clock))
+        var reviewedAt = Instant.now(clock);
+        var update = new Update().set("status", decision.name()).set("reviewedAt", reviewedAt)
                 .set("reviewedBy", reviewer).inc("version", 1);
         if (template.updateFirst(query, update, OrderDocument.class).getModifiedCount() != 1) {
             var winner = orders.findById(orderId).orElseThrow();
-            if (compatible(winner.status, decision)) return winner.toDomain();
+            if (compatible(winner.status, decision)) {
+                var replay = winner.toDomain();
+                enqueueDecision(replay, decision);
+                return replay;
+            }
             throw new StoreConflictException("Order changed in another request; refresh and retry");
         }
         if (decision == Decision.DENIED) {
@@ -81,7 +94,15 @@ class MongoAdminOrderStore implements AdminOrderStore {
                 if (restored.getModifiedCount() != 1) throw new NotFoundException("Unknown product " + line.productId);
             }
         }
-        return orders.findById(orderId).orElseThrow().toDomain();
+        var reviewed = orders.findById(orderId).orElseThrow().toDomain();
+        enqueueDecision(reviewed, decision);
+        return reviewed;
+    }
+
+    private void enqueueDecision(Order order, Decision decision) {
+        var type = decision == Decision.APPROVED
+                ? CustomerNotification.Type.ORDER_APPROVED : CustomerNotification.Type.ORDER_DENIED;
+        notifications.enqueue(order, type, order.reviewedAt() == null ? order.createdAt() : order.reviewedAt());
     }
 
     private static boolean compatible(String status, Decision decision) {

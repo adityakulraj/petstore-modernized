@@ -1,9 +1,9 @@
 package com.mongodb.modernization.petstore.config;
 
 import com.mongodb.modernization.petstore.accounts.application.CustomerAccountStore;
-import org.springframework.security.config.Customizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.core.userdetails.User;
@@ -12,6 +12,8 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+import org.springframework.security.web.context.RequestAttributeSecurityContextRepository;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.http.HttpMethod;
@@ -51,24 +53,51 @@ public class SecurityConfig {
     }
 
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http, UserDetailsService users, PasswordEncoder encoder) throws Exception {
+    @Order(1)
+    SecurityFilterChain diagnosticSecurityFilterChain(HttpSecurity http, UserDetailsService users,
+                                                      PasswordEncoder encoder) throws Exception {
+        var sessionContexts = new HttpSessionSecurityContextRepository();
+        var requestContexts = new RequestAttributeSecurityContextRepository();
         return http
-                // Register one provider on this chain so form login and Basic auth share the same
-                // dynamic customer lookup and the same admin/supplier principals.
+                // Basic auth is intentionally limited to read-only diagnostic endpoints. Browsers cache
+                // Basic credentials per origin and must never let those credentials replace a form-login
+                // session used by customer, supplier, or administrator workflows.
+                .securityMatcher("/api/v1/admin/logs", "/api/v1/admin/health")
                 .authenticationProvider(authenticationProvider(users, encoder))
+                // The HTML operations dashboard is opened through form login, so this chain must read that
+                // existing admin session. Basic-auth identities are request-only: they can call diagnostics
+                // from curl/health tooling but can never overwrite the browser's business-workflow session.
+                .securityContext(context -> context.securityContextRepository(sessionContexts))
+                .authorizeHttpRequests(auth -> auth.anyRequest().hasRole("ADMIN"))
+                .httpBasic(basic -> basic.securityContextRepository(requestContexts))
+                .headers(headers -> headers.contentSecurityPolicy(csp -> csp.policyDirectives(
+                        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
+                                "object-src 'none'; base-uri 'self'; frame-ancestors 'none'")))
+                .build();
+    }
+
+    @Bean
+    @Order(2)
+    SecurityFilterChain securityFilterChain(HttpSecurity http, UserDetailsService users, PasswordEncoder encoder) throws Exception {
+        var sessionContexts = new HttpSessionSecurityContextRepository();
+        return http
+                // Business workflows use a form-login session exclusively. This keeps one stable role
+                // throughout a browser session, even when the browser has cached old Basic credentials.
+                .authenticationProvider(authenticationProvider(users, encoder))
+                .securityContext(context -> context.securityContextRepository(sessionContexts))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/", "/index.html", "/assets/**", "/api/v1/catalog/**", "/api/v1/session", "/api/v1/csrf",
                                 "/actuator/health/**", "/error").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/accounts").permitAll()
                         .requestMatchers("/api/v1/accounts/**").hasRole("CUSTOMER")
+                        .requestMatchers("/api/v1/my-list/**").hasRole("CUSTOMER")
+                        .requestMatchers("/api/v1/notifications/**").hasRole("CUSTOMER")
                         .requestMatchers("/supplier/**", "/api/v1/supplier/**").hasRole("SUPPLIER")
                         .requestMatchers("/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
-                        .requestMatchers("/actuator/**").hasRole("CUSTOMER")
+                        .requestMatchers("/actuator/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .formLogin(form -> form.defaultSuccessUrl("/", false))
-                // Basic auth makes the read-only admin log endpoint convenient for local curl diagnostics.
-                .httpBasic(Customizer.withDefaults())
                 .logout(logout -> logout.logoutSuccessUrl("/"))
                 // Registration creates an unauthenticated principal, so it cannot be used to mutate an existing session.
                 // Profile, cart, checkout, logout, and every other authenticated mutation still require a CSRF token.

@@ -51,6 +51,7 @@ class OracleDatabaseDiagnostics implements DatabaseDiagnostics {
                     explain("orders.by_idempotency", "SELECT * FROM PS_ORDER WHERE CUSTOMER_ID = 'alice' AND IDEMPOTENCY_KEY = 'diagnostic'"),
                     explain("orders.by_customer", "SELECT * FROM PS_ORDER WHERE CUSTOMER_ID = 'alice' ORDER BY CREATED_AT DESC"),
                     explain("orders.lines.by_order", "SELECT * FROM PS_ORDER_LINE WHERE ORDER_ID = 'diagnostic'"),
+                    explain("admin.analytics.sales", "SELECT * FROM PS_ORDER WHERE CREATED_AT >= TIMESTAMP '2026-08-01 00:00:00' AND CREATED_AT < TIMESTAMP '2026-09-01 00:00:00' ORDER BY CREATED_AT"),
                     explain("inventory.conditional_decrement", "SELECT * FROM PS_PRODUCT WHERE ID = 'AV-CB-01' AND STOCK >= 1"));
             cached = new QueryPlanReport(Instant.now(), plans);
             return cached;
