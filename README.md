@@ -263,6 +263,3 @@ curl http://localhost:8080/actuator/health/readiness
 | UI | `src/main/resources/static/` |
 | Tests | `src/test/` and `e2e/` |
 
-## Production hardening still required
-
-The local identity provider and automatic schema/index creation are demonstration conveniences. A production deployment should use enterprise OIDC, secrets management, Flyway/Liquibase for Oracle, explicit controlled MongoDB index migrations, TLS, backups/restore drills, audited authorization, rate limits, and capacity-tested connection pools.
