@@ -6,6 +6,7 @@ import com.mongodb.modernization.petstore.observability.DatabaseExecutor;
 import com.mongodb.modernization.petstore.orders.domain.Order;
 import com.mongodb.modernization.petstore.notifications.application.CustomerNotificationStore;
 import com.mongodb.modernization.petstore.notifications.domain.CustomerNotification;
+import com.mongodb.modernization.petstore.payments.application.PaymentStore;
 import com.mongodb.modernization.petstore.shared.application.NotFoundException;
 import com.mongodb.modernization.petstore.shared.application.StoreConflictException;
 import com.mongodb.modernization.petstore.supplier.application.SupplierStore;
@@ -35,13 +36,14 @@ class OracleSupplierStore implements SupplierStore {
     private final TransactionTemplate transactions;
     private final DatabaseExecutor database;
     private final CustomerNotificationStore notifications;
+    private final PaymentStore payments;
     private final BigDecimal approvalThreshold;
     private final Clock clock = Clock.systemUTC();
 
     OracleSupplierStore(JpaProductRepository products, JpaSupplierPurchaseOrderRepository purchaseOrders,
                         JpaOrderRepository orders, JpaSupplierInventoryCommandRepository inventoryCommands,
                         PlatformTransactionManager transactionManager, DatabaseExecutor database,
-                        CustomerNotificationStore notifications, AppProperties properties) {
+                        CustomerNotificationStore notifications, AppProperties properties, PaymentStore payments) {
         this.products = products;
         this.purchaseOrders = purchaseOrders;
         this.orders = orders;
@@ -49,6 +51,7 @@ class OracleSupplierStore implements SupplierStore {
         this.transactions = new TransactionTemplate(transactionManager);
         this.database = database;
         this.notifications = notifications;
+        this.payments = payments;
         this.approvalThreshold = properties.admin().approvalThreshold();
     }
 
@@ -145,8 +148,14 @@ class OracleSupplierStore implements SupplierStore {
         try {
             return database.execute("supplier.purchase_order.ensure", true, () -> transactions.execute(ignored ->
                     purchaseOrders.findByOrderId(order.id()).map(SupplierPurchaseOrderJpaEntity::toDomain)
-                            .orElseGet(() -> purchaseOrders.saveAndFlush(new SupplierPurchaseOrderJpaEntity(
-                                    SupplierPurchaseOrder.ready(order))).toDomain())));
+                            .orElseGet(() -> {
+                                var current = orders.findById(order.id()).orElseThrow(() ->
+                                        new NotFoundException("Unknown order " + order.id())).toDomain();
+                                if (!current.supplierReady()) throw new StoreConflictException(
+                                        "Order is no longer eligible for supplier fulfilment");
+                                return purchaseOrders.saveAndFlush(new SupplierPurchaseOrderJpaEntity(
+                                        SupplierPurchaseOrder.ready(current))).toDomain();
+                            })));
         } catch (DataIntegrityViolationException race) {
             return database.execute("supplier.purchase_order.replay", true,
                     () -> purchaseOrders.findByOrderId(order.id()).orElseThrow(() -> race).toDomain());
@@ -157,21 +166,28 @@ class OracleSupplierStore implements SupplierStore {
     public SupplierPurchaseOrder processPurchaseOrder(String purchaseOrderId, long expectedVersion) {
         try {
             return database.execute("supplier.purchase_order.process", true, () -> transactions.execute(ignored -> {
-                var entity = purchaseOrders.findById(purchaseOrderId)
+                var entity = purchaseOrders.findByIdForUpdate(purchaseOrderId)
                         .orElseThrow(() -> new NotFoundException("Unknown supplier purchase order " + purchaseOrderId));
                 if (entity.status == SupplierPurchaseOrder.Status.PROCESSED) {
-                    ensureCompletedNotification(entity);
+                    ensureCompletedPaymentAndNotifications(entity);
                     return entity.toDomain();
+                }
+                if (entity.status != SupplierPurchaseOrder.Status.READY) {
+                    throw new StoreConflictException("Cancelled purchase orders cannot be processed");
                 }
                 if (entity.version != expectedVersion) {
                     throw new StoreConflictException("Purchase order changed in another request; refresh and retry");
                 }
-                entity.markProcessed(Instant.now(clock));
-                var processed = purchaseOrders.saveAndFlush(entity).toDomain();
-                if (orders.completeApproved(entity.orderId, Order.COMPLETED) != 1) {
+                var orderEntity = orders.findByIdForReview(entity.orderId)
+                        .orElseThrow(() -> new NotFoundException("Unknown order " + entity.orderId));
+                if (!Order.APPROVED.equals(orderEntity.status)) {
                     throw new StoreConflictException("Customer order was not ready for supplier completion");
                 }
-                ensureCompletedNotification(entity);
+                entity.markProcessed(Instant.now(clock));
+                var processed = purchaseOrders.saveAndFlush(entity).toDomain();
+                orderEntity.customerTransition(Order.COMPLETED);
+                orders.saveAndFlush(orderEntity);
+                ensureCompletedPaymentAndNotifications(entity);
                 return processed;
             }));
         } catch (ObjectOptimisticLockingFailureException conflict) {
@@ -179,14 +195,16 @@ class OracleSupplierStore implements SupplierStore {
         }
     }
 
-    private void ensureCompletedNotification(SupplierPurchaseOrderJpaEntity purchaseOrder) {
+    private void ensureCompletedPaymentAndNotifications(SupplierPurchaseOrderJpaEntity purchaseOrder) {
         var order = orders.findById(purchaseOrder.orderId)
                 .orElseThrow(() -> new NotFoundException("Unknown order " + purchaseOrder.orderId)).toDomain();
         if (!Order.COMPLETED.equals(order.status())) {
             throw new StoreConflictException("Customer order was not completed with the supplier purchase order");
         }
-        notifications.enqueue(order, CustomerNotification.Type.ORDER_COMPLETED,
-                purchaseOrder.processedAt == null ? Instant.now(clock) : purchaseOrder.processedAt);
+        var occurredAt = purchaseOrder.processedAt == null ? Instant.now(clock) : purchaseOrder.processedAt;
+        payments.capture(order, occurredAt);
+        notifications.enqueue(order, CustomerNotification.Type.PAYMENT_CAPTURED, occurredAt);
+        notifications.enqueue(order, CustomerNotification.Type.ORDER_COMPLETED, occurredAt.plusMillis(1));
     }
 
     private SupplierPurchaseOrder processedReplay(String purchaseOrderId, RuntimeException conflict) {

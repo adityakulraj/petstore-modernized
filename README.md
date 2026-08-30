@@ -7,7 +7,14 @@ APP_STORE=oracle  # JPA + Oracle transactions and @Version
 APP_STORE=mongo   # MongoDB documents, transactions, and @Version
 ```
 
-The application uses Spring Boot 4.1.x, a modular-monolith package structure, same-origin storefront, administrator, and supplier UIs, externalized configuration, health probes, idempotent checkout and supplier hand-off, atomic backorders/replenishment, conditional inventory updates, optimistic concurrency, persisted customer accounts, and a transactional customer-notification outbox.
+The application uses Spring Boot 4.1.x, a modular-monolith package structure, same-origin storefront, administrator, and supplier UIs, externalized configuration, health probes, idempotent checkout and supplier/customer commands, atomic backorders/replenishment, an explicit payment lifecycle, customer cancellation/refund, conditional inventory updates, optimistic concurrency, persisted customer accounts, and a transactional in-app notification outbox.
+
+The canonical, speaker-ready explanation of the complete effort—including every
+API, security boundary, Oracle/MongoDB schema choice, transaction and race
+guarantee, observability surface, test layer, design rationale, demo script, and
+feature-update checklist—is [the modernization deep-dive script](docs/modernization-deep-dive-script.md).
+Feature work is incomplete until that living document and the executable test
+matrix are reconciled.
 
 ## Fastest run: Docker Compose
 
@@ -81,7 +88,7 @@ Decisions are versioned, CSRF-protected, and replay-safe. Two opposite decisions
 
 ## Administrator sales and revenue analytics
 
-Open [http://localhost:8080/admin/sales.html](http://localhost:8080/admin/sales.html) with `admin` / `admin`. The dashboard provides date and category filters, recognized-revenue/order/unit/AOV cards, pending pipeline, a daily SVG trend, order-status mix, category performance, and category-to-item/SKU drilldown. Approved and completed orders count as recognized revenue; pending value is shown separately, while denied/backordered orders remain visible without inflating sales. The same API and UI run against Oracle on port 8081. See [the legacy evidence, calculation rules, diagrams, API, and walkthrough](docs/feature-sales-revenue-analytics.md).
+Open [http://localhost:8080/admin/sales.html](http://localhost:8080/admin/sales.html) with `admin` / `admin`. The dashboard provides date and category filters, recognized-revenue/order/unit/AOV cards, pending pipeline, a daily SVG trend, order-status mix, category performance, and category-to-item/SKU drilldown. Approved and completed orders count as recognized revenue; pending value is shown separately, while denied/backordered/cancelled/refunded orders remain visible without inflating sales. A completed order leaves recognized revenue when its refund commits. The same API and UI run against Oracle on port 8081. See [the legacy evidence, calculation rules, diagrams, API, and walkthrough](docs/feature-sales-revenue-analytics.md).
 
 ## Administrator catalog and price management
 
@@ -94,7 +101,7 @@ The supplier can view and replace absolute inventory quantities, see orders wait
 and process each purchase order. Inventory PUT retries use a durable `Idempotency-Key`; stale competing versions
 receive HTTP 409. Replenishment checks backorders oldest first and releases an order only when every line is
 available. One approved customer order creates one durable supplier PO, concurrent process retries converge on one
-`PROCESSED` result, and the matching customer order becomes `COMPLETED` in the same database transaction.
+`PROCESSED` result, and the matching customer order becomes `COMPLETED` while its authorized payment becomes `CAPTURED` in the same database transaction.
 
 The supplier flow, reliability decisions, diagrams, and manual walkthrough are documented in
 [docs/feature-supplier-portal.md](docs/feature-supplier-portal.md).
@@ -108,6 +115,12 @@ administrator approval/denial, and supplier completion insert their event in the
 the order transition. Deterministic order/type IDs deduplicate replays; a scheduled dispatcher records delivery
 attempts and uses exponential backoff capped at five minutes. See the
 [outbox design, diagrams, and manual walkthrough](docs/feature-customer-notifications.md).
+
+## Payment, cancellation, and refund
+
+Checkout accepts an opaque demo payment token and atomically creates an `AUTHORIZED` payment without storing card data or the token. The approved local method is **Demo Visa ending 4242**; the declined option proves that the entire checkout rolls back. Supplier fulfilment captures the payment. Customers can cancel `BACKORDERED`, `PENDING`, or `APPROVED` orders, which voids authorization, cancels any ready supplier PO, and restores previously reserved inventory exactly once. A completed/captured order can be refunded; refund is financial only and does not invent a physical return/restock event.
+
+Every transition appears in the existing in-app inbox/timeline; no real email delivery is used. Cancel/refund commands require an order version and durable `Idempotency-Key`, so identical retries converge while stale versions and conflicting key reuse return HTTP 409. See the [payment state machines, transaction diagrams, APIs, schema, race guarantees, and UI walkthrough](docs/feature-payment-cancellation-refund.md).
 
 ## Run the application outside Docker
 
@@ -185,9 +198,9 @@ npm run e2e:api:oracle
 npm run e2e:api:all
 ```
 
-The runner builds and starts a disposable Compose project on non-default ports, executes tests serially, resets carts/MyList favourites/customer orders/customer notifications/supplier inventory commands/supplier purchase orders/inventory before and after every test, verifies all eight item/SKU stock/version values after each reset, and deletes only the disposable test volumes. It refuses to reset a project whose name does not start with `petstore-e2e-`, so your normal local database is not a valid reset target.
+The runner builds and starts a disposable Compose project on non-default ports, executes tests serially, resets carts/MyList favourites/customer orders/payments/customer action commands/customer notifications/supplier inventory commands/supplier purchase orders/inventory before and after every test, verifies all eight item/SKU stock/version values after each reset, and deletes only the disposable test volumes. It refuses to reset a project whose name does not start with `petstore-e2e-`, so your normal local database is not a valid reset target.
 
-The API suite covers public catalog/session APIs, authentication and authorization for customer/admin/supplier roles, CSRF, customer registration/profile lifecycle, both demo accounts, cart CRUD and validation, order history, atomic backorder creation, stale versions, two-user inventory races, simultaneous cart updates, concurrent checkout and replenishment retries, administrator approval/denial races and inventory restoration, supplier inventory replacement, concurrent supplier PO processing, and the deduplicated customer-notification outbox lifecycle. Run API plus browser tests with:
+The API suite covers public catalog/session APIs, authentication and authorization for customer/admin/supplier roles, CSRF, customer registration/profile lifecycle, both demo accounts, cart CRUD and validation, order/payment history, atomic authorization and declined-checkout rollback, cancellation/void and refund, atomic backorder creation, stale versions, two-user inventory races, simultaneous cart updates, concurrent checkout and replenishment retries, administrator approval/denial races and inventory restoration, supplier inventory replacement, concurrent supplier PO processing/capture, and the deduplicated in-app notification outbox lifecycle. Run API plus browser tests with:
 
 ```bash
 npx playwright install chromium
@@ -270,7 +283,10 @@ curl http://localhost:8080/actuator/health/readiness
 - High-value checkout reserves stock as `PENDING`; approval emits one supplier PO, while denial restores stock in the decision transaction. Decision replays are idempotent and opposite races have one winner.
 - If any checkout line is unavailable, the order becomes `BACKORDERED`, no line is reserved, and the cart clears atomically. Replenishment locks/checks the whole order and releases it through the normal approval policy exactly once.
 - Supplier inventory commands have durable idempotency records. A same-key/same-payload retry returns the original result; a different payload with that key conflicts instead of overwriting later stock changes.
-- Checkout/decision/completion notifications are inserted in the same transaction as their order transitions. Deterministic order/type keys deduplicate replays; delivery retries use bounded exponential backoff capped at five minutes.
+- Payment authorization is part of checkout; supplier completion captures it; eligible customer cancellation or administrator denial voids it; completed-order refund reverses a capture. Each payment transition shares the order transaction.
+- Customer cancel/refund commands persist their full request and result under `<customerId>:<Idempotency-Key>`. Replays return that result, while stale versions and same-key/different-request races conflict.
+- Cancelling a reserved order restores inventory and cancels its ready supplier PO once. Cancelling a backorder restores none; refunding a delivered order does not restock without a separate return-receipt workflow.
+- Checkout/decision/payment/cancellation/refund/completion notifications are inserted in the same transaction as their order transitions. Deterministic order/type keys deduplicate replays; delivery retries use bounded exponential backoff capped at five minutes.
 - The UI calculates nothing authoritative: quantities are validated and totals are recomputed from server-held prices.
 
 ## Navigation for the panel
@@ -280,6 +296,7 @@ curl http://localhost:8080/actuator/health/readiness
 | Shared persistence contract | `shared/application/StorefrontStore.java` |
 | Business orchestration | `shared/application/StorefrontService.java` |
 | Administrator approval orchestration | `orders/application/AdminOrderService.java`, `orders/application/AdminOrderStore.java` |
+| Payment and customer cancellation/refund | `payments/`, `orders/application/CustomerOrderActionStore.java`, `persistence/*/*CustomerOrderActionStore.java` |
 | Customer inbox, timeline, and outbox delivery | `notifications/`, `static/assets/app.js` |
 | Backorders and replay-safe replenishment | `orders/domain/Order.java`, `persistence/*/*SupplierStore.java`, `static/assets/supplier.js` |
 | Cart rules | `cart/domain/Cart.java` |
@@ -295,4 +312,3 @@ curl http://localhost:8080/actuator/health/readiness
 | Approval dashboard | `static/admin/orders.html`, `static/assets/admin-orders.js` |
 | UI | `src/main/resources/static/` |
 | Tests | `src/test/` and `e2e/` |
-

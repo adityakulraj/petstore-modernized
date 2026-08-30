@@ -6,6 +6,7 @@ import com.mongodb.modernization.petstore.observability.DatabaseExecutor;
 import com.mongodb.modernization.petstore.orders.domain.Order;
 import com.mongodb.modernization.petstore.notifications.application.CustomerNotificationStore;
 import com.mongodb.modernization.petstore.notifications.domain.CustomerNotification;
+import com.mongodb.modernization.petstore.payments.application.PaymentStore;
 import com.mongodb.modernization.petstore.shared.application.NotFoundException;
 import com.mongodb.modernization.petstore.shared.application.StoreConflictException;
 import com.mongodb.modernization.petstore.supplier.application.SupplierStore;
@@ -39,6 +40,7 @@ class MongoSupplierStore implements SupplierStore {
     private final TransactionTemplate transactions;
     private final DatabaseExecutor database;
     private final CustomerNotificationStore notifications;
+    private final PaymentStore payments;
     private final BigDecimal approvalThreshold;
     private final Clock clock = Clock.systemUTC();
 
@@ -46,7 +48,8 @@ class MongoSupplierStore implements SupplierStore {
                        MongoOrderRepository orders, MongoSupplierInventoryCommandRepository inventoryCommands,
                        MongoTemplate template,
                        @Qualifier("mongoTransactionManager") PlatformTransactionManager transactionManager,
-                       DatabaseExecutor database, CustomerNotificationStore notifications, AppProperties properties) {
+                       DatabaseExecutor database, CustomerNotificationStore notifications, AppProperties properties,
+                       PaymentStore payments) {
         this.products = products;
         this.purchaseOrders = purchaseOrders;
         this.orders = orders;
@@ -55,6 +58,7 @@ class MongoSupplierStore implements SupplierStore {
         this.transactions = new TransactionTemplate(transactionManager);
         this.database = database;
         this.notifications = notifications;
+        this.payments = payments;
         this.approvalThreshold = properties.admin().approvalThreshold();
     }
 
@@ -163,8 +167,14 @@ class MongoSupplierStore implements SupplierStore {
         try {
             return database.execute("supplier.purchase_order.ensure", true, () -> transactions.execute(ignored ->
                     purchaseOrders.findByOrderId(order.id()).map(SupplierPurchaseOrderDocument::toDomain)
-                            .orElseGet(() -> purchaseOrders.insert(new SupplierPurchaseOrderDocument(
-                                    SupplierPurchaseOrder.ready(order))).toDomain())));
+                            .orElseGet(() -> {
+                                var current = orders.findById(order.id()).orElseThrow(() ->
+                                        new NotFoundException("Unknown order " + order.id())).toDomain();
+                                if (!current.supplierReady()) throw new StoreConflictException(
+                                        "Order is no longer eligible for supplier fulfilment");
+                                return purchaseOrders.insert(new SupplierPurchaseOrderDocument(
+                                        SupplierPurchaseOrder.ready(current))).toDomain();
+                            })));
         } catch (DataIntegrityViolationException race) {
             return database.execute("supplier.purchase_order.replay", true,
                     () -> purchaseOrders.findByOrderId(order.id()).orElseThrow(() -> race).toDomain());
@@ -178,8 +188,11 @@ class MongoSupplierStore implements SupplierStore {
                 var document = purchaseOrders.findById(purchaseOrderId)
                         .orElseThrow(() -> new NotFoundException("Unknown supplier purchase order " + purchaseOrderId));
                 if (document.status == SupplierPurchaseOrder.Status.PROCESSED) {
-                    ensureCompletedNotification(document);
+                    ensureCompletedPaymentAndNotifications(document);
                     return document.toDomain();
+                }
+                if (document.status != SupplierPurchaseOrder.Status.READY) {
+                    throw new StoreConflictException("Cancelled purchase orders cannot be processed");
                 }
                 long actualVersion = document.version == null ? 0 : document.version;
                 if (actualVersion != expectedVersion) {
@@ -193,7 +206,7 @@ class MongoSupplierStore implements SupplierStore {
                 if (completed.getModifiedCount() != 1) {
                     throw new StoreConflictException("Customer order was not ready for supplier completion");
                 }
-                ensureCompletedNotification(document);
+                ensureCompletedPaymentAndNotifications(document);
                 return processed;
             }));
         } catch (OptimisticLockingFailureException conflict) {
@@ -201,14 +214,16 @@ class MongoSupplierStore implements SupplierStore {
         }
     }
 
-    private void ensureCompletedNotification(SupplierPurchaseOrderDocument purchaseOrder) {
+    private void ensureCompletedPaymentAndNotifications(SupplierPurchaseOrderDocument purchaseOrder) {
         var order = orders.findById(purchaseOrder.orderId)
                 .orElseThrow(() -> new NotFoundException("Unknown order " + purchaseOrder.orderId)).toDomain();
         if (!Order.COMPLETED.equals(order.status())) {
             throw new StoreConflictException("Customer order was not completed with the supplier purchase order");
         }
-        notifications.enqueue(order, CustomerNotification.Type.ORDER_COMPLETED,
-                purchaseOrder.processedAt == null ? Instant.now(clock) : purchaseOrder.processedAt);
+        var occurredAt = purchaseOrder.processedAt == null ? Instant.now(clock) : purchaseOrder.processedAt;
+        payments.capture(order, occurredAt);
+        notifications.enqueue(order, CustomerNotification.Type.PAYMENT_CAPTURED, occurredAt);
+        notifications.enqueue(order, CustomerNotification.Type.ORDER_COMPLETED, occurredAt.plusMillis(1));
     }
 
     private SupplierPurchaseOrder processedReplay(String purchaseOrderId, RuntimeException conflict) {

@@ -2,7 +2,7 @@
 
 ## Scope and notation
 
-This document describes the schema implemented by the current application, including customer accounts, administratively managed product/item variants and prices, catalog-change auditing, MyList favourites, carts, customer orders/backorders, administrator review, replay-safe supplier inventory commands, supplier purchase orders, and the customer notification outbox/inbox. It is derived from the JPA entities and MongoDB document mappings, and its keys/indexes were cross-checked against the running local Oracle and MongoDB catalogs on August 26, 2026.
+This document describes the schema implemented by the current application, including customer accounts, administratively managed product/item variants and prices, catalog-change auditing, MyList favourites, carts, customer orders/backorders, payment authorization/capture/void/refund, customer cancellation/refund commands, administrator review, replay-safe supplier inventory commands, supplier purchase orders, and the customer notification outbox/inbox. It is derived from the JPA entities and MongoDB document mappings.
 
 Key labels used below:
 
@@ -17,7 +17,7 @@ Key labels used below:
 
 | Concern | Oracle | MongoDB |
 |---|---|---|
-| Storage model | Twelve normalized/outbox/command/audit tables | Nine aggregate-oriented collections |
+| Storage model | Fourteen normalized/outbox/command/audit tables | Eleven aggregate-oriented collections |
 | Child lines | Separate `PS_*_LINE` tables | Embedded arrays inside cart/order/PO documents |
 | Primary identity | Declared primary-key constraints | Mandatory unique `_id` index |
 | Referential integrity | Enforced for parent-to-line tables; business references are otherwise logical | No foreign keys; aggregate ownership and cross-collection references are enforced by application transactions |
@@ -167,6 +167,36 @@ erDiagram
         NUMBER RESULT_VERSION "19,0; committed result"
         TIMESTAMPTZ COMPLETED_AT "command audit time"
     }
+    PS_PAYMENT {
+        VARCHAR2 ID PK "36 chars; equals order ID"
+        VARCHAR2 ORDER_ID UK "36 chars; logical order ref"
+        VARCHAR2 CUSTOMER_ID "100 chars; logical account ref"
+        NUMBER AMOUNT "12,2; immutable order amount"
+        VARCHAR2 CURRENCY "3 chars; USD"
+        VARCHAR2 METHOD_LABEL "80 chars; masked display only"
+        VARCHAR2 STATUS "AUTHORIZED/CAPTURED/VOIDED/REFUNDED"
+        VARCHAR2 AUTHORIZATION_REFERENCE "80 chars"
+        VARCHAR2 CAPTURE_REFERENCE "80 chars; nullable"
+        VARCHAR2 REFUND_REFERENCE "80 chars; nullable"
+        TIMESTAMPTZ CREATED_AT "customer-history index"
+        TIMESTAMPTZ AUTHORIZED_AT "not null"
+        TIMESTAMPTZ CAPTURED_AT "nullable"
+        TIMESTAMPTZ VOIDED_AT "nullable"
+        TIMESTAMPTZ REFUNDED_AT "nullable"
+        NUMBER VERSION "19,0; optimistic token"
+    }
+    PS_CUSTOMER_ORDER_COMMAND {
+        VARCHAR2 ID PK "customer:idempotency-key"
+        VARCHAR2 CUSTOMER_ID "100 chars"
+        VARCHAR2 IDEMPOTENCY_KEY "100 chars"
+        VARCHAR2 ORDER_ID "36 chars; logical order ref"
+        VARCHAR2 ACTION "CANCEL or REFUND"
+        NUMBER EXPECTED_VERSION "request token"
+        VARCHAR2 REASON "250 chars"
+        VARCHAR2 RESULT_STATUS "committed order status"
+        NUMBER RESULT_VERSION "committed order version"
+        TIMESTAMPTZ CREATED_AT "command audit time"
+    }
 
     PS_CART ||--o{ PS_CART_LINE : "FK: CUSTOMER_ID"
     PS_ORDER ||--|{ PS_ORDER_LINE : "FK: ORDER_ID"
@@ -188,6 +218,8 @@ flowchart LR
     POLINE["PS_SUPPLIER_PO_LINE\nPK SUPPLIER_PO_ID + LINE_NUMBER"]
     NOTICE["PS_CUSTOMER_NOTIFICATION\nPK ID; UK ORDER_ID + TYPE"]
     COMMAND["PS_SUPPLIER_INV_COMMAND\nPK ID = Idempotency-Key"]
+    PAYMENT["PS_PAYMENT\nPK ID; UK ORDER_ID"]
+    ORDERCOMMAND["PS_CUSTOMER_ORDER_COMMAND\nPK customer:Idempotency-Key"]
     CHANGE["PS_CATALOG_CHANGE\nPK ID"]
     FAVORITE["PS_FAVORITE_ITEM\nPK CUSTOMER_ID:ITEM_ID"]
 
@@ -199,6 +231,10 @@ flowchart LR
     PO -.->|"ORDER_ID = ID"| ORDER
     NOTICE -.->|"CUSTOMER_ID = USERNAME"| ACCOUNT
     NOTICE -.->|"ORDER_ID = ID"| ORDER
+    PAYMENT -.->|"CUSTOMER_ID = USERNAME"| ACCOUNT
+    PAYMENT -.->|"ORDER_ID = ID"| ORDER
+    ORDERCOMMAND -.->|"CUSTOMER_ID = USERNAME"| ACCOUNT
+    ORDERCOMMAND -.->|"ORDER_ID = ID"| ORDER
     COMMAND -.->|"PRODUCT_ID = ID"| PRODUCT
     CHANGE -.->|"PRODUCT_ID = ID"| PRODUCT
     FAVORITE -.->|"CUSTOMER_ID = USERNAME"| ACCOUNT
@@ -292,7 +328,7 @@ The deterministic PK and `(CUSTOMER_ID, ITEM_ID)` UK express the same uniqueness
 | `PS_ORDER.CUSTOMER_ID` | `VARCHAR2(100)` | No | UK part 1; IX part 1 | Logical account reference and history partition key. |
 | `PS_ORDER.IDEMPOTENCY_KEY` | `VARCHAR2(100)` | No | UK part 2 | Together with customer ID prevents duplicate checkout orders. |
 | `PS_ORDER.CREATED_AT` | `TIMESTAMP(9) WITH TIME ZONE` | No | History IX part 2; analytics IX | UTC creation instant; customer history sorts newest first and analytics performs bounded range reads. |
-| `PS_ORDER.STATUS` | `VARCHAR2(30)` | No | — | `BACKORDERED`, `PENDING`, `APPROVED`, `DENIED`, or `COMPLETED`. |
+| `PS_ORDER.STATUS` | `VARCHAR2(30)` | No | — | `BACKORDERED`, `PENDING`, `APPROVED`, `DENIED`, `COMPLETED`, `CANCELLED`, or `REFUNDED`. |
 | `PS_ORDER.SHIP_*` | Address columns above | `LINE2` only nullable | — | Immutable checkout-time shipping snapshot. |
 | `PS_ORDER.TOTAL` | `NUMBER(12,2)` | No | — | Immutable server-calculated order total. |
 | `PS_ORDER.VERSION` | `NUMBER(19,0)` | No | Optimistic token | Protects admin review and supplier completion. |
@@ -314,6 +350,42 @@ Indexes/constraints:
 - IX `IX_PS_ORDER_ANALYTICS_CREATED (CREATED_AT)` for administrator date-range analytics.
 - Child PK `(ORDER_ID, LINE_NUMBER)`, child FK to `PS_ORDER(ID)`, and `IX_PS_ORDER_LINE_ORDER`.
 
+### `PS_PAYMENT`
+
+| Column | Type | Null | Key/index | Meaning |
+|---|---|---:|---|---|
+| `ID` | `VARCHAR2(36)` | No | PK | Equal to the order UUID, making one payment aggregate per order. |
+| `ORDER_ID` | `VARCHAR2(36)` | No | UK; logical order ref | Order whose immutable total is being settled. |
+| `CUSTOMER_ID` | `VARCHAR2(100)` | No | IX part 1; logical account ref | Payment owner/history partition. |
+| `AMOUNT` | `NUMBER(12,2)` | No | — | Immutable server-calculated order amount. |
+| `CURRENCY` | `VARCHAR2(3)` | No | — | ISO-style currency code; currently `USD`. |
+| `METHOD_LABEL` | `VARCHAR2(80)` | No | — | Safe masked display label. No PAN, CVV, expiry, or payment token is stored. |
+| `STATUS` | `VARCHAR2(20)` | No | — | `AUTHORIZED`, `CAPTURED`, `VOIDED`, or `REFUNDED`. |
+| `AUTHORIZATION_REFERENCE` | `VARCHAR2(80)` | No | — | Synthetic local authorization reference; provider reference in a production adapter. |
+| `CAPTURE_REFERENCE`, `REFUND_REFERENCE` | `VARCHAR2(80)` | Yes | — | Populated only when the corresponding transition commits. |
+| `CREATED_AT`, `AUTHORIZED_AT` | `TIMESTAMP(9) WITH TIME ZONE` | No | Customer IX part 2 on created | Creation/authorization audit instants. |
+| `CAPTURED_AT`, `VOIDED_AT`, `REFUNDED_AT` | `TIMESTAMP(9) WITH TIME ZONE` | Yes | — | Terminal transition audit instants. |
+| `VERSION` | `NUMBER(19,0)` | No | Optimistic token | Prevents competing capture/void/refund transitions from clobbering one another. |
+
+`IX_PS_PAYMENT_CUSTOMER_CREATED (CUSTOMER_ID, CREATED_AT)` supports principal-scoped payment history. The order-ID unique constraint and primary key express the same one-payment-per-order invariant defensively.
+
+### `PS_CUSTOMER_ORDER_COMMAND`
+
+| Column | Type | Null | Key/index | Meaning |
+|---|---|---:|---|---|
+| `ID` | `VARCHAR2(220)` | No | PK | Deterministic `<customer-id>:<Idempotency-Key>` command identity. |
+| `CUSTOMER_ID` | `VARCHAR2(100)` | No | IX part 1; logical account ref | Authenticated command owner. |
+| `IDEMPOTENCY_KEY` | `VARCHAR2(100)` | No | Encoded in PK | Caller key retained for audit. |
+| `ORDER_ID` | `VARCHAR2(36)` | No | IX part 2; logical order ref | Target order. |
+| `ACTION` | `VARCHAR2(10)` | No | — | `CANCEL` or `REFUND`. |
+| `EXPECTED_VERSION` | `NUMBER(19,0)` | No | — | Order version supplied by the original request. |
+| `REASON` | `VARCHAR2(250)` | No | — | Bounded customer-supplied reason. |
+| `RESULT_STATUS` | `VARCHAR2(30)` | No | — | Order status returned by the committed command. |
+| `RESULT_VERSION` | `NUMBER(19,0)` | No | — | Order version returned by the committed command. |
+| `CREATED_AT` | `TIMESTAMP(9) WITH TIME ZONE` | No | IX part 3 | Completion/audit instant. |
+
+The full request tuple is compared on replay. An identical request returns the stored result; reusing the key for a different order/action/version/reason is a conflict.
+
 ### `PS_SUPPLIER_PO` and `PS_SUPPLIER_PO_LINE`
 
 | Table.column | Type | Null | Key/index | Meaning |
@@ -322,7 +394,7 @@ Indexes/constraints:
 | `PS_SUPPLIER_PO.ORDER_ID` | `VARCHAR2(36)` | No | UK | Logical reference to `PS_ORDER.ID`; uniqueness guarantees one PO per customer order. |
 | `PS_SUPPLIER_PO.CUSTOMER_ID` | `VARCHAR2(100)` | No | — | Logical account reference copied for supplier display. |
 | `PS_SUPPLIER_PO.CREATED_AT` | `TIMESTAMP(9) WITH TIME ZONE` | No | IX `IX_PS_SUPPLIER_PO_CREATED` | PO creation instant/newest-first listing key. |
-| `PS_SUPPLIER_PO.STATUS` | `VARCHAR2(30)` | No | — | `READY` or `PROCESSED`. |
+| `PS_SUPPLIER_PO.STATUS` | `VARCHAR2(30)` | No | — | `READY`, `PROCESSED`, or `CANCELLED`. A customer cancellation atomically cancels an unprocessed PO. |
 | `PS_SUPPLIER_PO.VERSION` | `NUMBER(19,0)` | No | Optimistic token | Makes processing and identical retries converge. |
 | `PS_SUPPLIER_PO.PROCESSED_AT` | `TIMESTAMP(9) WITH TIME ZONE` | Yes | — | Set exactly once on first successful processing. |
 | `PS_SUPPLIER_PO_LINE.SUPPLIER_PO_ID` | `VARCHAR2(36)` | No | PK + FK; IX | Owning PO; database-enforced FK. |
@@ -336,7 +408,7 @@ Indexes/constraints:
 | `ID` | `VARCHAR2(80)` | No | PK | Deterministic `<order-id>:<event-type>` deduplication/provider-idempotency key. |
 | `CUSTOMER_ID` | `VARCHAR2(100)` | No | IX part 1; logical account ref | Inbox owner and authorization partition. |
 | `ORDER_ID` | `VARCHAR2(36)` | No | UK part 1; logical order ref | Order whose committed transition emitted the event. |
-| `TYPE` | `VARCHAR2(30)` | No | UK part 2 | `ORDER_BACKORDERED`, `ORDER_INVENTORY_ALLOCATED`, `ORDER_PENDING`, `ORDER_APPROVED`, `ORDER_DENIED`, or `ORDER_COMPLETED`. |
+| `TYPE` | `VARCHAR2(30)` | No | UK part 2 | Order lifecycle and payment lifecycle event type. Current values include backorder/allocation/pending/approval/denial/completion/cancellation/refund plus payment authorization/capture/void/refund. |
 | `TITLE` | `VARCHAR2(120)` | No | — | Inbox/timeline heading. |
 | `MESSAGE` | `VARCHAR2(500)` | No | — | Customer-facing lifecycle explanation. |
 | `CREATED_AT` | `TIMESTAMP(9) WITH TIME ZONE` | No | IX part 2 | Transition time; inbox sorts newest first. |
@@ -379,6 +451,8 @@ The stored request tuple detects accidental key reuse with a different payload. 
 | `PS_SUPPLIER_PO_LINE` | PK `(SUPPLIER_PO_ID, LINE_NUMBER)`; FK `SUPPLIER_PO_ID → PS_SUPPLIER_PO.ID` |
 | `PS_CUSTOMER_NOTIFICATION` | PK `ID`; UK `(ORDER_ID, TYPE)`; customer/history and delivery/due indexes |
 | `PS_SUPPLIER_INV_COMMAND` | PK `ID`; product audit index |
+| `PS_PAYMENT` | PK `ID`; UK `ORDER_ID`; customer/created history index |
+| `PS_CUSTOMER_ORDER_COMMAND` | PK deterministic customer/key; customer/order/created audit index |
 
 Oracle-generated `SYS_*` names back constraints for which no explicit name is provided. The application should not depend on those generated names. The named idempotency/category/history indexes are stable. With the deployed UTF-8 Oracle database, catalog `DATA_LENGTH` may report up to four bytes per configured JPA character; the lengths above are the application-level character limits.
 
@@ -488,6 +562,36 @@ classDiagram
         int64 resultVersion
         date completedAt
     }
+    class payments {
+        string _id "equals order ID"
+        string orderId "one payment per order"
+        string customerId "history partition"
+        Decimal128 amount
+        string currency
+        string methodLabel "masked display only"
+        string status
+        string authorizationReference
+        string captureReference "optional"
+        string refundReference "optional"
+        date createdAt
+        date authorizedAt
+        date capturedAt "optional"
+        date voidedAt "optional"
+        date refundedAt "optional"
+        int64 version
+    }
+    class customerOrderCommands {
+        string _id "customerId:Idempotency-Key"
+        string customerId
+        string idempotencyKey
+        string orderId
+        string action
+        int64 expectedVersion
+        string reason
+        string resultStatus
+        int64 resultVersion
+        date createdAt
+    }
     class Address {
         string fullName
         string line1
@@ -531,6 +635,8 @@ flowchart LR
     PO["supplierPurchaseOrders\n_id; unique orderId"]
     NOTICE["customerNotifications\n_id = orderId:eventType"]
     COMMAND["supplierInventoryCommands\n_id = Idempotency-Key"]
+    PAYMENT["payments\n_id = orderId"]
+    ORDERCOMMAND["customerOrderCommands\n_id = customerId:Idempotency-Key"]
     FAVORITE["favoriteItems\n_id = customerId:itemId"]
     CHANGE["catalogChanges\n_id = change UUID"]
 
@@ -543,6 +649,10 @@ flowchart LR
     PO -.->|"orderId"| ORDER
     NOTICE -.->|"customerId"| ACCOUNT
     NOTICE -.->|"orderId"| ORDER
+    PAYMENT -.->|"customerId"| ACCOUNT
+    PAYMENT -.->|"orderId"| ORDER
+    ORDERCOMMAND -.->|"customerId"| ACCOUNT
+    ORDERCOMMAND -.->|"orderId"| ORDER
     COMMAND -.->|"productId"| PRODUCT
     FAVORITE -.->|"customerId"| ACCOUNT
     FAVORITE -.->|"itemId"| PRODUCT
@@ -622,7 +732,7 @@ MongoDB has no foreign-key constraints. These references are checked or produced
 | `customerId` | String | Yes | Compound UK/IX part 1 | Logical account reference and history partition. |
 | `idempotencyKey` | String | Yes | Compound UK part 2 | Combined with customer ID prevents duplicate checkout. |
 | `createdAt` | Date | Yes | Compound IX part 2, descending | UTC order instant/newest-first history. |
-| `status` | String | Yes | — | `BACKORDERED`, `PENDING`, `APPROVED`, `DENIED`, or `COMPLETED`. |
+| `status` | String | Yes | — | `BACKORDERED`, `PENDING`, `APPROVED`, `DENIED`, `COMPLETED`, `CANCELLED`, or `REFUNDED`. |
 | `shippingAddress` | Embedded document | Yes | — | Immutable address snapshot. |
 | `lines` | Array of documents | Yes | — | Immutable product/name/price/quantity/subtotal snapshots. |
 | `total` | Decimal128 | Yes | — | Immutable server-calculated order total. |
@@ -636,6 +746,41 @@ Indexes:
 - `uk_order_idempotency` — unique `{customerId: 1, idempotencyKey: 1}`.
 - `ix_order_customer_created` — `{customerId: 1, createdAt: -1}`.
 
+### `payments`
+
+| Field | BSON type | Required by application | Key/index | Meaning |
+|---|---|---:|---|---|
+| `_id` | String | Yes | Unique `_id_` | Equal to `orderId`, enforcing one payment aggregate per order. |
+| `orderId` | String | Yes | Logical order reference | Repeats `_id` for explicit domain mapping. |
+| `customerId` | String | Yes | Compound IX part 1 | Authenticated payment owner/history partition. |
+| `amount` | Decimal128 | Yes | — | Immutable order total. |
+| `currency` | String | Yes | — | Currently `USD`. |
+| `methodLabel` | String | Yes | — | Safe masked display text. The opaque token and raw card data are never stored. |
+| `status` | String | Yes | — | `AUTHORIZED`, `CAPTURED`, `VOIDED`, or `REFUNDED`. |
+| `authorizationReference` | String | Yes | — | Synthetic local authorization reference. |
+| `captureReference`, `refundReference` | String | No | — | Set only after their transitions commit. |
+| `createdAt`, `authorizedAt` | Date | Yes | Compound IX part 2 on created | Creation/authorization audit instants. |
+| `capturedAt`, `voidedAt`, `refundedAt` | Date | No | — | Lifecycle transition instants. |
+| `version` | Int64 | Yes | Optimistic token | Protects capture/void/refund races. |
+
+Index `ix_payment_customer_created {customerId: 1, createdAt: -1}` supports principal-scoped history.
+
+### `customerOrderCommands`
+
+| Field | BSON type | Required by application | Key/index | Meaning |
+|---|---|---:|---|---|
+| `_id` | String | Yes | Unique `_id_` | Deterministic `<customerId>:<Idempotency-Key>`. |
+| `customerId`, `idempotencyKey` | String | Yes | Customer IX part 1 | Authenticated owner and retained caller key. |
+| `orderId` | String | Yes | Customer IX part 2; logical order ref | Target order. |
+| `action` | String | Yes | — | `CANCEL` or `REFUND`. |
+| `expectedVersion` | Int64 | Yes | — | Original order concurrency token. |
+| `reason` | String | Yes | — | Bounded customer reason. |
+| `resultStatus` | String | Yes | — | Committed order status. |
+| `resultVersion` | Int64 | Yes | — | Committed order version. |
+| `createdAt` | Date | Yes | Customer IX part 3, descending | Command audit instant. |
+
+The stored request tuple rejects conflicting key reuse; the stored result makes identical retries independent of later order changes.
+
 ### `supplierPurchaseOrders`
 
 | Field | BSON type | Required by application | Key/index | Meaning |
@@ -644,7 +789,7 @@ Indexes:
 | `orderId` | String | Yes | UK `orderId` ascending | Logical order reference and one-PO-per-order invariant. |
 | `customerId` | String | Yes | — | Copied logical account reference. |
 | `createdAt` | Date | Yes | — | PO creation instant. Current repository sorts it; there is no explicit MongoDB created-time index yet. |
-| `status` | String | Yes | — | `READY` or `PROCESSED`. |
+| `status` | String | Yes | — | `READY`, `PROCESSED`, or `CANCELLED`. |
 | `lines` | Array of embedded `OrderLine` documents | Yes | — | Approved-order snapshot. |
 | `version` | Int64 | Yes for current writes | Optimistic token | Spring Data `@Version`; protects processing. |
 | `processedAt` | Date | No | — | First successful processing instant. |
@@ -656,7 +801,7 @@ Indexes:
 | `_id` | String | Yes | Unique `_id_` | Deterministic `<order-id>:<event-type>` deduplication/provider-idempotency key. |
 | `customerId` | String | Yes | Compound IX part 1 | Inbox owner/logical account reference. |
 | `orderId` | String | Yes | Logical order reference | Groups events into the order timeline. |
-| `type` | String | Yes | Encoded in `_id` | One of six lifecycle event types, including backordered and inventory-allocated transitions. |
+| `type` | String | Yes | Encoded in `_id` | Order and payment lifecycle type, including cancellation/refund and authorization/capture/void/refund events. |
 | `title`, `message` | String | Yes | — | Customer-facing copy snapshotted with the event. |
 | `createdAt` | Date | Yes | Customer IX part 2, descending | Transition time/newest-first inbox key. |
 | `deliveryStatus` | String | Yes | Delivery IX part 1 | `PENDING` or `DELIVERED`. |
@@ -693,6 +838,8 @@ The request tuple and result snapshot give the MongoDB adapter the same durable 
 | `supplierPurchaseOrders` | Unique `_id`; unique `orderId` index |
 | `customerNotifications` | Unique deterministic `_id`; `(customerId ASC, createdAt DESC)` inbox index; `(deliveryStatus ASC, nextAttemptAt ASC)` due-work index |
 | `supplierInventoryCommands` | Unique `_id` idempotency key; ascending `productId` audit index |
+| `payments` | Unique `_id` equal to order ID; `(customerId ASC, createdAt DESC)` history index |
+| `customerOrderCommands` | Unique deterministic customer/key `_id`; `(customerId ASC, orderId ASC, createdAt DESC)` audit index |
 
 There is currently no MongoDB JSON Schema validator attached to these collections. Java validation and mapping define required values for new writes, while the mappers retain limited backward compatibility, such as treating a missing legacy `version` as zero.
 
@@ -711,8 +858,10 @@ There is currently no MongoDB JSON Schema validator attached to these collection
 | Supplier PO | `PS_SUPPLIER_PO` plus FK-owned `PS_SUPPLIER_PO_LINE` rows | One `supplierPurchaseOrders` document with embedded `lines[]` |
 | Customer notification/outbox | One `PS_CUSTOMER_NOTIFICATION` row per order transition | One `customerNotifications` document per order transition |
 | Supplier inventory command | One `PS_SUPPLIER_INV_COMMAND` row per idempotency key | One `supplierInventoryCommands` document per idempotency key |
+| Payment | One `PS_PAYMENT` row per order | One `payments` document whose `_id` equals the order ID |
+| Customer cancel/refund command | One `PS_CUSTOMER_ORDER_COMMAND` row per customer/idempotency key | One `customerOrderCommands` document per customer/idempotency key |
 
-The API/domain layer does not expose either storage shape. Both adapters return the same domain records and execute the same shared persistence contract, including optimistic versions, checkout/supplier-command/MyList idempotency, all-or-nothing backorder allocation, stock reservation/restoration, admin decision races, supplier completion, notification deduplication, and replay-safe read state.
+The API/domain layer does not expose either storage shape. Both adapters return the same domain records and execute the same shared persistence contract, including optimistic versions, checkout/supplier-command/customer-action/MyList idempotency, all-or-nothing backorder allocation, stock reservation/restoration, payment authorization/capture/void/refund, admin decision races, supplier completion, notification deduplication, and replay-safe read state.
 
 ## Source of truth
 

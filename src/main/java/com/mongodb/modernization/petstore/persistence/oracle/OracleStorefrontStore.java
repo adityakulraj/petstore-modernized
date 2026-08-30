@@ -8,6 +8,7 @@ import com.mongodb.modernization.petstore.orders.application.DuplicateCheckoutEx
 import com.mongodb.modernization.petstore.orders.domain.Order;
 import com.mongodb.modernization.petstore.notifications.application.CustomerNotificationStore;
 import com.mongodb.modernization.petstore.notifications.domain.CustomerNotification;
+import com.mongodb.modernization.petstore.payments.application.PaymentStore;
 import com.mongodb.modernization.petstore.observability.DatabaseExecutor;
 import com.mongodb.modernization.petstore.shared.application.NotFoundException;
 import com.mongodb.modernization.petstore.shared.application.StoreConflictException;
@@ -39,16 +40,18 @@ class OracleStorefrontStore implements StorefrontStore {
     private final JpaOrderRepository orders;
     private final TransactionTemplate transactions;
     private final CustomerNotificationStore notifications;
+    private final PaymentStore payments;
     private final DatabaseExecutor database;
     private final BigDecimal approvalThreshold;
     private final Clock clock = Clock.systemUTC();
 
     OracleStorefrontStore(JpaProductRepository products, JpaCartRepository carts, JpaOrderRepository orders,
                           PlatformTransactionManager transactionManager, DatabaseExecutor database,
-                          AppProperties properties, CustomerNotificationStore notifications) {
+                          AppProperties properties, CustomerNotificationStore notifications, PaymentStore payments) {
         this.products = products; this.carts = carts; this.orders = orders;
         this.transactions = new TransactionTemplate(transactionManager);
         this.notifications = notifications;
+        this.payments = payments;
         this.database = database;
         this.approvalThreshold = properties.admin().approvalThreshold();
     }
@@ -110,11 +113,17 @@ class OracleStorefrontStore implements StorefrontStore {
 
     @Override
     public Order checkout(String customerId, long expectedCartVersion, String key, Address address) {
-        return database.execute("orders.checkout", true,
-                () -> transactions.execute(ignored -> checkoutOnce(customerId, expectedCartVersion, key, address)));
+        return checkout(customerId, expectedCartVersion, key, address,
+                com.mongodb.modernization.petstore.payments.domain.Payment.APPROVED_DEMO_TOKEN);
     }
 
-    private Order checkoutOnce(String customerId, long expectedCartVersion, String key, Address address) {
+    @Override
+    public Order checkout(String customerId, long expectedCartVersion, String key, Address address, String paymentToken) {
+        return database.execute("orders.checkout", true,
+                () -> transactions.execute(ignored -> checkoutOnce(customerId, expectedCartVersion, key, address, paymentToken)));
+    }
+
+    private Order checkoutOnce(String customerId, long expectedCartVersion, String key, Address address, String paymentToken) {
         // Serialize checkouts for one customer's cart, then re-check the idempotency key while
         // holding the row lock. A simultaneous retry waits for the winner and returns its order.
         var cartEntity = carts.findByIdForCheckout(customerId)
@@ -122,7 +131,9 @@ class OracleStorefrontStore implements StorefrontStore {
         var existing = orders.findByCustomerIdAndIdempotencyKey(customerId, key);
         if (existing.isPresent()) {
             var replay = existing.get().toDomain();
+            payments.authorize(replay, paymentToken, replay.createdAt());
             enqueueCheckoutNotification(replay);
+            notifications.enqueue(replay, CustomerNotification.Type.PAYMENT_AUTHORIZED, replay.createdAt().plusMillis(1));
             return replay;
         }
         var cart = cartEntity.toDomain();
@@ -149,7 +160,9 @@ class OracleStorefrontStore implements StorefrontStore {
         try {
             var persistedOrder = orders.saveAndFlush(new OrderJpaEntity(order));
             var persisted = persistedOrder.toDomain();
+            payments.authorize(persisted, paymentToken, now);
             enqueueCheckoutNotification(persisted);
+            notifications.enqueue(persisted, CustomerNotification.Type.PAYMENT_AUTHORIZED, now.plusMillis(1));
             cartEntity.replaceWith(Cart.empty(cart.id(), customerId, cart.version()));
             carts.saveAndFlush(cartEntity);
             // Hibernate owns the initial @Version value. Return that persisted value so the first

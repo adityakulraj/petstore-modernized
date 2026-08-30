@@ -6,6 +6,7 @@ import com.mongodb.modernization.petstore.accounts.application.AccountAlreadyExi
 import com.mongodb.modernization.petstore.cart.domain.InvalidQuantityException;
 import com.mongodb.modernization.petstore.orders.application.DuplicateCheckoutException;
 import com.mongodb.modernization.petstore.orders.application.InsufficientStockException;
+import com.mongodb.modernization.petstore.payments.application.PaymentDeclinedException;
 import com.mongodb.modernization.petstore.shared.application.NotFoundException;
 import com.mongodb.modernization.petstore.shared.application.StoreConflictException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -79,6 +80,13 @@ public class ApiExceptionHandler {
     @ExceptionHandler(AccountAlreadyExistsException.class)
     ProblemDetail duplicateAccount(AccountAlreadyExistsException error, HttpServletRequest request) {
         return problem(HttpStatus.CONFLICT, error.getMessage(), request);
+    }
+
+    @ExceptionHandler(PaymentDeclinedException.class)
+    ProblemDetail paymentDeclined(PaymentDeclinedException error, HttpServletRequest request) {
+        LOG.atWarn().addKeyValue("event", "payment.authorization.declined")
+                .addKeyValue("path", request.getRequestURI()).log("Payment authorization declined");
+        return problem(HttpStatus.UNPROCESSABLE_CONTENT, error.getMessage(), request);
     }
 
     @ExceptionHandler(DataAccessException.class)

@@ -42,6 +42,8 @@ function resetMongo(project) {
   const script = `
     db.carts.deleteMany({});
     db.customerNotifications.deleteMany({});
+    db.customerOrderCommands.deleteMany({});
+    db.payments.deleteMany({});
     db.favoriteItems.deleteMany({});
     db.supplierInventoryCommands.deleteMany({});
     db.supplierPurchaseOrders.deleteMany({});
@@ -64,6 +66,8 @@ function resetOracle(project) {
   const sql = `
     WHENEVER SQLERROR EXIT SQL.SQLCODE
     DELETE FROM PS_CUSTOMER_NOTIFICATION;
+    DELETE FROM PS_CUSTOMER_ORDER_COMMAND;
+    DELETE FROM PS_PAYMENT;
     DELETE FROM PS_FAVORITE_ITEM;
     DELETE FROM PS_SUPPLIER_INV_COMMAND;
     DELETE FROM PS_SUPPLIER_PO_LINE;

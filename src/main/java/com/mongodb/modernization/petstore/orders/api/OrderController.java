@@ -12,6 +12,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -35,10 +36,29 @@ public class OrderController {
     public Order checkout(@RequestHeader("Idempotency-Key") @NotBlank @Size(max = 100) String idempotencyKey,
                           @Valid @RequestBody CheckoutRequest request, Authentication authentication) {
         return storefront.checkout(authentication.getName(), request.expectedCartVersion(), idempotencyKey,
-                request.address().toDomain());
+                request.address().toDomain(), request.paymentToken());
     }
 
-    public record CheckoutRequest(@Min(0) long expectedCartVersion, @NotNull @Valid AddressRequest address) {}
+    @PostMapping("/{orderId}/cancel")
+    public Order cancel(@PathVariable String orderId,
+                        @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 100) String idempotencyKey,
+                        @Valid @RequestBody CustomerActionRequest request, Authentication authentication) {
+        return storefront.cancel(authentication.getName(), orderId, request.expectedVersion(), idempotencyKey,
+                request.reason());
+    }
+
+    @PostMapping("/{orderId}/refund")
+    public Order refund(@PathVariable String orderId,
+                        @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 100) String idempotencyKey,
+                        @Valid @RequestBody CustomerActionRequest request, Authentication authentication) {
+        return storefront.refund(authentication.getName(), orderId, request.expectedVersion(), idempotencyKey,
+                request.reason());
+    }
+
+    public record CheckoutRequest(@Min(0) long expectedCartVersion, @NotNull @Valid AddressRequest address,
+                                  @Size(max = 100) String paymentToken) {}
+    public record CustomerActionRequest(@Min(0) long expectedVersion,
+                                        @NotBlank @Size(max = 250) String reason) {}
 
     public record AddressRequest(@NotBlank @Size(max = 100) String fullName,
                                  @NotBlank @Size(max = 150) String line1,

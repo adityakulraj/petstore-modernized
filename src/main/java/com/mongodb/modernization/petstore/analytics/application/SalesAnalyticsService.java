@@ -152,7 +152,9 @@ public class SalesAnalyticsService {
             case Order.PENDING -> 2;
             case Order.BACKORDERED -> 3;
             case Order.DENIED -> 4;
-            default -> 5;
+            case Order.CANCELLED -> 5;
+            case Order.REFUNDED -> 6;
+            default -> 7;
         };
     }
 

@@ -9,7 +9,9 @@ public record CustomerNotification(String id, String customerId, String orderId,
                                    DeliveryStatus deliveryStatus, int deliveryAttempts,
                                    Instant nextAttemptAt, Instant deliveredAt, String lastError,
                                    Instant readAt, long version) {
-    public enum Type { ORDER_BACKORDERED, ORDER_INVENTORY_ALLOCATED, ORDER_PENDING, ORDER_APPROVED, ORDER_DENIED, ORDER_COMPLETED }
+    public enum Type { ORDER_BACKORDERED, ORDER_INVENTORY_ALLOCATED, ORDER_PENDING, ORDER_APPROVED, ORDER_DENIED,
+        ORDER_COMPLETED, ORDER_CANCELLED, ORDER_REFUNDED, PAYMENT_AUTHORIZED, PAYMENT_CAPTURED, PAYMENT_VOIDED,
+        PAYMENT_REFUNDED }
     public enum DeliveryStatus { PENDING, DELIVERED }
 
     public static CustomerNotification forOrder(Order order, Type type, Instant occurredAt) {
@@ -42,6 +44,30 @@ public record CustomerNotification(String id, String customerId, String orderId,
             case ORDER_COMPLETED -> {
                 title = "Order completed";
                 message = "Order " + shortId + " was fulfilled by the supplier.";
+            }
+            case ORDER_CANCELLED -> {
+                title = "Order cancelled";
+                message = "Order " + shortId + " was cancelled. Any reserved inventory was released.";
+            }
+            case ORDER_REFUNDED -> {
+                title = "Order refunded";
+                message = "The refund for completed order " + shortId + " has been recorded.";
+            }
+            case PAYMENT_AUTHORIZED -> {
+                title = "Payment authorized";
+                message = "Payment for order " + shortId + " was authorized; no card data was stored.";
+            }
+            case PAYMENT_CAPTURED -> {
+                title = "Payment captured";
+                message = "Payment for order " + shortId + " was captured after supplier fulfilment.";
+            }
+            case PAYMENT_VOIDED -> {
+                title = "Payment authorization voided";
+                message = "The uncaptured payment authorization for order " + shortId + " was voided.";
+            }
+            case PAYMENT_REFUNDED -> {
+                title = "Payment refunded";
+                message = "The captured payment for order " + shortId + " was refunded.";
             }
             default -> throw new IllegalArgumentException("Unsupported notification type " + type);
         }

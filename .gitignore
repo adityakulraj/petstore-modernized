@@ -7,5 +7,6 @@ playwright-report/
 test-results/
 .env
 *.log
+*.log.*.gz
 .tools/
 docs/modernization-ai-working-session.md

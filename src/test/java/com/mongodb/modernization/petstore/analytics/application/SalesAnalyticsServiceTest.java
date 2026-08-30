@@ -35,7 +35,11 @@ class SalesAnalyticsServiceTest {
                 order("pending", Order.PENDING, "2026-08-26T11:00:00Z",
                         line("K9-RT-01", "Golden Retriever", "950.00", 1)),
                 order("denied", Order.DENIED, "2026-08-26T11:15:00Z",
-                        line("FL-DSH-01", "Domestic Shorthair", "320.00", 1)));
+                        line("FL-DSH-01", "Domestic Shorthair", "320.00", 1)),
+                order("cancelled", Order.CANCELLED, "2026-08-26T11:20:00Z",
+                        line("FI-SW-02", "Tiger Shark", "49.50", 1)),
+                order("refunded", Order.REFUNDED, "2026-08-26T11:25:00Z",
+                        line("AV-CB-01", "Canary", "125.00", 1)));
         var service = service(orders);
 
         var all = service.report(LocalDate.parse("2026-08-25"), LocalDate.parse("2026-08-26"), null);
@@ -49,7 +53,8 @@ class SalesAnalyticsServiceTest {
         assertThat(all.daily()).extracting(item -> item.revenue())
                 .containsExactly(new BigDecimal("158.00"), new BigDecimal("850.00"));
         assertThat(all.statuses()).extracting(item -> item.status())
-                .containsExactly(Order.COMPLETED, Order.APPROVED, Order.PENDING, Order.DENIED);
+                .containsExactly(Order.COMPLETED, Order.APPROVED, Order.PENDING, Order.DENIED,
+                        Order.CANCELLED, Order.REFUNDED);
 
         var dogs = service.report(LocalDate.parse("2026-08-25"), LocalDate.parse("2026-08-26"), " dogs ");
         assertThat(dogs.dimension()).isEqualTo("ITEM");

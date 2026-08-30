@@ -59,10 +59,11 @@ async function addItem(client, productId, quantity, expectedVersion) {
   });
 }
 
-async function checkout(client, expectedCartVersion, idempotencyKey = crypto.randomUUID(), address = ADDRESS) {
+async function checkout(client, expectedCartVersion, idempotencyKey = crypto.randomUUID(), address = ADDRESS,
+                        paymentToken = 'tok_demo_visa') {
   return client.context.post('/api/v1/orders', {
     headers: { ...client.csrf, 'Idempotency-Key': idempotencyKey },
-    data: { expectedCartVersion, address }
+    data: { expectedCartVersion, address, paymentToken }
   });
 }
 
@@ -823,7 +824,7 @@ test('supplier replenishment releases a backorder once and preserves its custome
     expect(purchaseOrders.filter(po => po.orderId === backordered.id)).toHaveLength(1);
     const inbox = await (await customer.context.get('/api/v1/notifications')).json();
     expect(inbox.filter(item => item.orderId === backordered.id).map(item => item.type).sort())
-      .toEqual(['ORDER_APPROVED', 'ORDER_BACKORDERED', 'ORDER_INVENTORY_ALLOCATED']);
+      .toEqual(['ORDER_APPROVED', 'ORDER_BACKORDERED', 'ORDER_INVENTORY_ALLOCATED', 'PAYMENT_AUTHORIZED']);
   } finally {
     await customer.context.dispose();
     await supplierA.context.dispose();
@@ -846,8 +847,8 @@ test('customer notification outbox tracks approval and fulfilment without duplic
     await checkout(customer, changed.version, 'notification-lifecycle-e2e');
 
     let inbox = await (await customer.context.get('/api/v1/notifications')).json();
-    expect(inbox).toHaveLength(1);
-    expect(inbox[0]).toMatchObject({
+    expect(inbox).toHaveLength(2);
+    expect(inbox.find(item => item.type === 'ORDER_PENDING')).toMatchObject({
       id: `${pending.id}:ORDER_PENDING`, orderId: pending.id, customerId: USERS.alice,
       type: 'ORDER_PENDING', deliveryStatus: expect.stringMatching(/PENDING|DELIVERED/), readAt: null
     });
@@ -872,8 +873,10 @@ test('customer notification outbox tracks approval and fulfilment without duplic
     });
 
     inbox = await (await customer.context.get('/api/v1/notifications')).json();
-    expect(inbox.map(item => item.type).sort()).toEqual(['ORDER_APPROVED', 'ORDER_COMPLETED', 'ORDER_PENDING']);
-    expect(new Set(inbox.map(item => item.id)).size).toBe(3);
+    expect(inbox.map(item => item.type).sort()).toEqual([
+      'ORDER_APPROVED', 'ORDER_COMPLETED', 'ORDER_PENDING', 'PAYMENT_AUTHORIZED', 'PAYMENT_CAPTURED'
+    ]);
+    expect(new Set(inbox.map(item => item.id)).size).toBe(5);
     const completed = inbox.find(item => item.type === 'ORDER_COMPLETED');
     const marked = await customer.context.post(`/api/v1/notifications/${encodeURIComponent(completed.id)}/read`, {
       headers: customer.csrf, data: { expectedVersion: completed.version }
@@ -1067,6 +1070,84 @@ test('admin catalog lifecycle is idempotent, concurrency-safe, audited, and pres
   } finally {
     await admin.context.dispose();
     await customer.context.dispose();
+    await supplier.context.dispose();
+  }
+});
+
+test('payment authorization, cancellation, capture, and refund are atomic and replay safe', async ({ playwright }) => {
+  const alice = await login(playwright, 'alice');
+  const aditya = await login(playwright, 'aditya');
+  const supplier = await login(playwright, 'supplier');
+  try {
+    let changed = await (await addItem(alice, 'AV-CB-01', 1, (await cart(alice)).version)).json();
+    const placed = await (await checkout(alice, changed.version, 'payment-cancel-checkout')).json();
+    let payment = (await (await alice.context.get('/api/v1/payments')).json()).find(item => item.orderId === placed.id);
+    expect(payment).toMatchObject({ status: 'AUTHORIZED', amount: 125, currency: 'USD', methodLabel: 'Demo Visa ending 4242' });
+    expect(payment).not.toHaveProperty('paymentToken');
+    expect(await (await aditya.context.get('/api/v1/payments')).json()).toEqual([]);
+
+    let purchaseOrders = await (await supplier.context.get('/api/v1/supplier/purchase-orders')).json();
+    const cancellablePo = purchaseOrders.find(item => item.orderId === placed.id);
+    const cancel = () => alice.context.post(`/api/v1/orders/${placed.id}/cancel`, {
+      headers: { ...alice.csrf, 'Idempotency-Key': 'customer-cancel-command' },
+      data: { expectedVersion: placed.version, reason: 'Customer changed their mind' }
+    });
+    const cancelledResponse = await cancel();
+    expect(cancelledResponse.status()).toBe(200);
+    const cancelled = await cancelledResponse.json();
+    expect(cancelled.status).toBe('CANCELLED');
+    expect((await cancel()).status()).toBe(200);
+    payment = (await (await alice.context.get('/api/v1/payments')).json()).find(item => item.orderId === placed.id);
+    expect(payment.status).toBe('VOIDED');
+    expect(await product(alice.context, 'AV-CB-01')).toMatchObject({ stock: SEED_STOCK['AV-CB-01'] });
+    purchaseOrders = await (await supplier.context.get('/api/v1/supplier/purchase-orders')).json();
+    expect(purchaseOrders.find(item => item.id === cancellablePo.id).status).toBe('CANCELLED');
+    expect((await supplier.context.post(`/api/v1/supplier/purchase-orders/${cancellablePo.id}/process`, {
+      headers: supplier.csrf, data: { expectedVersion: cancellablePo.version }
+    })).status()).toBe(409);
+    expect((await aditya.context.post(`/api/v1/orders/${placed.id}/cancel`, {
+      headers: { ...aditya.csrf, 'Idempotency-Key': 'other-customer-cancel' },
+      data: { expectedVersion: cancelled.version, reason: 'Not my order' }
+    })).status()).toBe(404);
+
+    changed = await (await addItem(alice, 'RP-IG-01', 1, (await cart(alice)).version)).json();
+    const declined = await checkout(alice, changed.version, 'payment-declined-checkout', ADDRESS, 'tok_demo_declined');
+    expect(declined.status()).toBe(422);
+    expect((await cart(alice)).lines).toHaveLength(1);
+    expect((await (await alice.context.get('/api/v1/orders')).json()).filter(order => order.idempotencyKey === 'payment-declined-checkout')).toEqual([]);
+    expect(await product(alice.context, 'RP-IG-01')).toMatchObject({ stock: SEED_STOCK['RP-IG-01'] });
+
+    changed = await (await addItem(aditya, 'FI-SW-01', 1, (await cart(aditya)).version)).json();
+    const fulfillable = await (await checkout(aditya, changed.version, 'payment-refund-checkout')).json();
+    purchaseOrders = await (await supplier.context.get('/api/v1/supplier/purchase-orders')).json();
+    const refundPo = purchaseOrders.find(item => item.orderId === fulfillable.id);
+    const processed = await supplier.context.post(`/api/v1/supplier/purchase-orders/${refundPo.id}/process`, {
+      headers: supplier.csrf, data: { expectedVersion: refundPo.version }
+    });
+    expect(processed.status()).toBe(200);
+    const completed = (await (await aditya.context.get('/api/v1/orders')).json()).find(item => item.id === fulfillable.id);
+    expect(completed.status).toBe('COMPLETED');
+    payment = (await (await aditya.context.get('/api/v1/payments')).json()).find(item => item.orderId === fulfillable.id);
+    expect(payment.status).toBe('CAPTURED');
+    const stockAfterFulfilment = (await product(aditya.context, 'FI-SW-01')).stock;
+
+    const refund = () => aditya.context.post(`/api/v1/orders/${fulfillable.id}/refund`, {
+      headers: { ...aditya.csrf, 'Idempotency-Key': 'customer-refund-command' },
+      data: { expectedVersion: completed.version, reason: 'Customer requested a refund' }
+    });
+    expect((await (await refund()).json()).status).toBe('REFUNDED');
+    expect((await refund()).status()).toBe(200);
+    payment = (await (await aditya.context.get('/api/v1/payments')).json()).find(item => item.orderId === fulfillable.id);
+    expect(payment.status).toBe('REFUNDED');
+    expect((await product(aditya.context, 'FI-SW-01')).stock).toBe(stockAfterFulfilment);
+    const inboxTypes = (await (await aditya.context.get('/api/v1/notifications')).json())
+      .filter(item => item.orderId === fulfillable.id).map(item => item.type);
+    expect(inboxTypes).toEqual(expect.arrayContaining([
+      'PAYMENT_AUTHORIZED', 'PAYMENT_CAPTURED', 'ORDER_COMPLETED', 'PAYMENT_REFUNDED', 'ORDER_REFUNDED'
+    ]));
+  } finally {
+    await alice.context.dispose();
+    await aditya.context.dispose();
     await supplier.context.dispose();
   }
 });

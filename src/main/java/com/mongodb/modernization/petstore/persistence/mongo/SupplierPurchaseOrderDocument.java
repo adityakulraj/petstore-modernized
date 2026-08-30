@@ -37,6 +37,8 @@ class SupplierPurchaseOrderDocument {
         processedAt = when;
     }
 
+    void cancel() { status = SupplierPurchaseOrder.Status.CANCELLED; }
+
     SupplierPurchaseOrder toDomain() {
         return new SupplierPurchaseOrder(id, orderId, customerId, createdAt, status,
                 lines.stream().map(OrderLineDocument::toDomain).toList(), version == null ? 0 : version, processedAt);

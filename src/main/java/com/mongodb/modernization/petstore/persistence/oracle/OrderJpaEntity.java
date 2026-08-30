@@ -63,4 +63,5 @@ class OrderJpaEntity {
     }
 
     void allocateInventory(String nextStatus) { status = nextStatus; }
+    void customerTransition(String nextStatus) { status = nextStatus; }
 }

@@ -8,6 +8,7 @@ import com.mongodb.modernization.petstore.orders.application.DuplicateCheckoutEx
 import com.mongodb.modernization.petstore.orders.domain.Order;
 import com.mongodb.modernization.petstore.notifications.application.CustomerNotificationStore;
 import com.mongodb.modernization.petstore.notifications.domain.CustomerNotification;
+import com.mongodb.modernization.petstore.payments.application.PaymentStore;
 import com.mongodb.modernization.petstore.observability.DatabaseExecutor;
 import com.mongodb.modernization.petstore.shared.application.NotFoundException;
 import com.mongodb.modernization.petstore.shared.application.StoreConflictException;
@@ -44,6 +45,7 @@ class MongoStorefrontStore implements StorefrontStore {
     private final MongoOrderRepository orders;
     private final MongoTemplate template;
     private final CustomerNotificationStore notifications;
+    private final PaymentStore payments;
     private final TransactionTemplate transactions;
     private final DatabaseExecutor database;
     private final BigDecimal approvalThreshold;
@@ -53,9 +55,10 @@ class MongoStorefrontStore implements StorefrontStore {
                          MongoOrderRepository orders, MongoTemplate template,
                          @Qualifier("mongoTransactionManager") PlatformTransactionManager transactionManager,
                          DatabaseExecutor database, AppProperties properties,
-                         CustomerNotificationStore notifications) {
+                         CustomerNotificationStore notifications, PaymentStore payments) {
         this.products = products; this.carts = carts; this.orders = orders; this.template = template;
         this.notifications = notifications;
+        this.payments = payments;
         this.transactions = new TransactionTemplate(transactionManager);
         this.database = database;
         this.approvalThreshold = properties.admin().approvalThreshold();
@@ -118,16 +121,24 @@ class MongoStorefrontStore implements StorefrontStore {
 
     @Override
     public Order checkout(String customerId, long expectedCartVersion, String key, Address address) {
-        // Checkout is safe to replay because its key is unique and the whole operation is transactional.
-        return database.execute("orders.checkout", true,
-                () -> transactions.execute(status -> checkoutOnce(customerId, expectedCartVersion, key, address)));
+        return checkout(customerId, expectedCartVersion, key, address,
+                com.mongodb.modernization.petstore.payments.domain.Payment.APPROVED_DEMO_TOKEN);
     }
 
-    private Order checkoutOnce(String customerId, long expectedCartVersion, String key, Address address) {
+    @Override
+    public Order checkout(String customerId, long expectedCartVersion, String key, Address address, String paymentToken) {
+        // Checkout is safe to replay because its key is unique and the whole operation is transactional.
+        return database.execute("orders.checkout", true,
+                () -> transactions.execute(status -> checkoutOnce(customerId, expectedCartVersion, key, address, paymentToken)));
+    }
+
+    private Order checkoutOnce(String customerId, long expectedCartVersion, String key, Address address, String paymentToken) {
         var existing = orders.findByCustomerIdAndIdempotencyKey(customerId, key);
         if (existing.isPresent()) {
             var replay = existing.get().toDomain();
+            payments.authorize(replay, paymentToken, replay.createdAt());
             enqueueCheckoutNotification(replay);
+            notifications.enqueue(replay, CustomerNotification.Type.PAYMENT_AUTHORIZED, replay.createdAt().plusMillis(1));
             return replay;
         }
         var cartDocument = carts.findById(customerId).orElseThrow(() -> new StoreConflictException("Cart is empty"));
@@ -153,7 +164,9 @@ class MongoStorefrontStore implements StorefrontStore {
                 : Order.backordered(UUID.randomUUID().toString(), customerId, key, now, address, cart);
         try {
             orders.insert(new OrderDocument(order));
+            payments.authorize(order, paymentToken, now);
             enqueueCheckoutNotification(order);
+            notifications.enqueue(order, CustomerNotification.Type.PAYMENT_AUTHORIZED, now.plusMillis(1));
             cartDocument.replaceWith(Cart.empty(cart.id(), customerId, cart.version()));
             carts.save(cartDocument);
             return order;

@@ -3,7 +3,7 @@
 ## Executive summary
 
 This project preserves the familiar catalog, cart, checkout, order-history,
-customer-account, administrator-approval, supplier-fulfilment, and customer order-notification experience of the Oracle Java Pet Store while replacing its classic J2EE-era
+customer-account, payment, customer cancellation/refund, administrator-approval, supplier-fulfilment, and customer order-notification experience of the Oracle Java Pet Store while replacing its classic J2EE-era
 application style with a Java 21, Spring Boot 4 modular monolith. The result is
 easier to run, test, observe, and evolve, without turning a small domain into a
 distributed system.
@@ -17,7 +17,7 @@ API and operations dashboard.
 
 This comparison was checked against the supplied PetStore 1.3.2 source tree at
 `/Users/adkunwar/Downloads/petstore1.3.2`. The modernization in this repository
-covers the customer storefront, customer account lifecycle, atomic backorders and supplier replenishment, high-value order approval, supplier inventory, supplier purchase-order processing, and durable customer order notifications. Remaining legacy applications and integrations are called out explicitly rather than presented as complete.
+covers the customer storefront, customer account lifecycle, atomic backorders and supplier replenishment, demo payment authorization/capture/void/refund, customer cancellation/refund, high-value order approval, supplier inventory, supplier purchase-order processing, and durable in-app customer notifications. Remaining external production integrations are called out explicitly rather than presented as complete.
 
 The source confirms a J2EE 1.3 architecture: four EAR applications
 (storefront, administrator, OPC, and supplier); a storefront EAR containing
@@ -44,9 +44,9 @@ Relevant legacy sources include:
 | Configuration | XML descriptors and JNDI names configure EJBs, JDBC, JMS, and server mappings. | Typed, externalized Spring configuration and environment variables. | The same artifact runs locally, in CI, and in containers without source edits. |
 | Deployment | Ant 1.4.1 produces and verifies multiple EARs for a J2EE server; Cloudscape is part of setup. | Docker Compose starts the app and one selected database profile. | Reproducible local setup and isolated, disposable E2E environments. |
 | Persistence | CMP EJBs and JNDI JDBC data sources. | One `StorefrontStore` contract with Oracle/JPA and MongoDB adapters. | Oracle remains supported while the data-store choice can evolve independently. |
-| Reliability | Transaction behavior may be implicit in framework/container boundaries. | Explicit transactions, optimistic versions, conditional stock changes, idempotent checkout/inventory/PO/decision handling, all-or-nothing backorder allocation, and serialized races. | Prevents lost updates, overselling, partial reservations, duplicate orders, duplicate fulfilment, and double inventory restoration. |
+| Reliability | Transaction behavior may be implicit in framework/container boundaries. | Explicit transactions, optimistic versions, conditional stock changes, idempotent checkout/inventory/PO/decision/customer-action handling, all-or-nothing backorder allocation, atomic payment transitions, and serialized races. | Prevents lost updates, overselling, partial reservations, duplicate orders/charges/fulfilment/refunds, and double inventory restoration. |
 | Security | Legacy authentication patterns and broad server configuration. | Spring Security form-login sessions for business workflows, Basic auth limited to read-only diagnostics, CSRF protection for mutations, role-separated customer/admin routes, and restrictive response headers/CSP. | Safer demo defaults, no cached-Basic role confusion, and a clearer migration path to enterprise OIDC. |
-| Workflow integration | JMS queues/topics and message-driven beans connect storefront, OPC, supplier, customer relations, and mailer flows. | Approval and supplier fulfilment are transactional workflows; a transactional notification outbox drives an in-app inbox/timeline with retry audit. External email and payment providers remain explicit adapters. | Preserves visible outcomes, prevents state/message divergence, and leaves true external boundaries replaceable. |
+| Workflow integration | JMS queues/topics and message-driven beans connect storefront, OPC, supplier, customer relations, and mailer flows. | Approval, supplier fulfilment, payment, cancellation, and refund are transactional workflows; a transactional notification outbox drives an in-app inbox/timeline with retry audit. The local payment ledger uses opaque demo tokens and leaves a production provider as a replaceable adapter; email is intentionally unnecessary. | Preserves visible outcomes, prevents state/message divergence, and leaves true external boundaries replaceable. |
 | Observability | Logs and runtime state are often separate from the user workflow. | Correlation IDs, JSON logs, health probes, request/database telemetry, query diagnostics, and an admin dashboard. | Faster diagnosis without giving customers access to operational data. |
 | Quality gates | Manual verification is common for a sample application. | JUnit, integration tests, Playwright browser/API contracts, and GitHub Actions for both Oracle and MongoDB modes. | Regressions are caught consistently across both persistence implementations. |
 
@@ -69,7 +69,7 @@ one repeatable command, while CI uses the same application artifact.
 
 The code is grouped around the domain rather than around an application server:
 
-- `accounts`, `analytics`, `catalog`, `cart`, `mylist`, `orders`, and `supplier` contain their API and domain behavior.
+- `accounts`, `analytics`, `catalog`, `cart`, `mylist`, `orders`, `payments`, and `supplier` contain their API and domain behavior.
 - `shared/application/StorefrontService` orchestrates business operations.
 - `StorefrontStore` is the persistence boundary.
 - `persistence/oracle` and `persistence/mongo` implement that boundary.
@@ -94,6 +94,11 @@ The modernization makes correctness rules explicit:
 - If any line is unavailable, checkout reserves nothing and creates a durable `BACKORDERED` order instead of losing the customer's request.
 - Supplier replenishment checks waiting orders oldest first, allocates every line atomically, and returns released orders to the same approval policy.
 - A durable inventory-command idempotency key makes concurrent retries converge without resetting stock consumed by a prior backorder release.
+- Checkout authorizes an opaque demo payment token in the same transaction; a decline rolls back order, inventory, notification, and cart changes.
+- Supplier processing captures the authorization atomically with PO/order completion.
+- Customer cancellation voids the authorization, cancels any ready supplier PO, and restores reserved stock exactly once; backorders restore no stock because they reserved none.
+- Customer refund changes a completed order and captured payment together. It deliberately does not restock a physical item without a return-receipt workflow.
+- Durable customer-action commands make cancel/refund retries converge and reject same-key/different-request misuse.
 
 **Outcome:** concurrent customers cannot oversell inventory, overwrite another
 cart update, or accidentally place the same order twice.
@@ -160,7 +165,9 @@ outcomes.
 
 ### 8. Legacy account and back-office workflows in a browser
 
-- Customer registration/profile persists contact details, default address, language/category, and display preferences using BCrypt password hashes; raw payment-card storage was intentionally not reproduced.
+- Customer registration/profile persists contact details, default address, language/category, and display preferences using BCrypt password hashes.
+- Checkout uses an opaque local demo token and persists a payment ledger with `AUTHORIZED`, `CAPTURED`, `VOIDED`, and `REFUNDED` states. Raw card details and even the opaque input token are never stored.
+- Customers can cancel eligible pre-fulfilment orders or refund completed/captured orders from the storefront; all outcomes and payment transitions appear as durable in-app notifications.
 - `/admin/orders.html` replaces the Java Web Start approval client with a responsive pending queue, audit history, and replay-safe approve/deny commands.
 - `/admin/sales.html` restores the legacy date/category sales and revenue charts with explicit recognized-versus-pending semantics and item/SKU drilldown.
 - `/admin/catalog.html` adds role-protected item/SKU creation, metadata and price changes, publish/archive controls, and a durable audit trail while suppliers retain inventory ownership.
@@ -169,7 +176,7 @@ outcomes.
 - The storefront **MyList** persists explicit customer favourites, derives deterministic recommendations from sibling variants and favourite categories, and restores item-level choices such as **Male Adult Bulldog** and **Female Puppy Bulldog**.
 - The original strict US policy is retained: totals below $500 auto-approve; totals at or above $500 require review.
 
-**Outcome:** the most visible account, personalized catalogue, catalog/pricing, approval, sales analytics, supplier, and customer-relations capabilities now run in the same deployable service while retaining role separation and transactional guarantees. Detailed approval diagrams are in [feature-admin-order-approval.md](feature-admin-order-approval.md), catalog diagrams are in [feature-catalog-price-management.md](feature-catalog-price-management.md), analytics diagrams are in [feature-sales-revenue-analytics.md](feature-sales-revenue-analytics.md), backorder/replenishment diagrams are in [feature-backorder-replenishment.md](feature-backorder-replenishment.md), notification/outbox diagrams are in [feature-customer-notifications.md](feature-customer-notifications.md), and MyList/item diagrams are in [feature-mylist-and-item-variants.md](feature-mylist-and-item-variants.md).
+**Outcome:** the most visible account, personalized catalogue, payment, cancellation/refund, catalog/pricing, approval, sales analytics, supplier, and customer-relations capabilities now run in the same deployable service while retaining role separation and transactional guarantees. Payment/cancellation/refund diagrams are in [feature-payment-cancellation-refund.md](feature-payment-cancellation-refund.md), approval diagrams are in [feature-admin-order-approval.md](feature-admin-order-approval.md), catalog diagrams are in [feature-catalog-price-management.md](feature-catalog-price-management.md), analytics diagrams are in [feature-sales-revenue-analytics.md](feature-sales-revenue-analytics.md), backorder/replenishment diagrams are in [feature-backorder-replenishment.md](feature-backorder-replenishment.md), notification/outbox diagrams are in [feature-customer-notifications.md](feature-customer-notifications.md), and MyList/item diagrams are in [feature-mylist-and-item-variants.md](feature-mylist-and-item-variants.md).
 
 The complete Oracle relational model, MongoDB document model, primary/foreign/logical keys, column dictionaries, and cross-store mapping are documented in [database-schema.md](database-schema.md).
 

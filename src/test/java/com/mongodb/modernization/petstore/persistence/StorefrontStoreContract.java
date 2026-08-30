@@ -6,6 +6,10 @@ import com.mongodb.modernization.petstore.catalog.application.CatalogStore;
 import com.mongodb.modernization.petstore.orders.application.AdminOrderService;
 import com.mongodb.modernization.petstore.orders.application.AdminOrderStore;
 import com.mongodb.modernization.petstore.orders.domain.Order;
+import com.mongodb.modernization.petstore.orders.application.CustomerOrderActionStore;
+import com.mongodb.modernization.petstore.payments.application.PaymentDeclinedException;
+import com.mongodb.modernization.petstore.payments.application.PaymentStore;
+import com.mongodb.modernization.petstore.payments.domain.Payment;
 import com.mongodb.modernization.petstore.notifications.application.CustomerNotificationStore;
 import com.mongodb.modernization.petstore.notifications.domain.CustomerNotification;
 import com.mongodb.modernization.petstore.mylist.application.MyListStore;
@@ -42,6 +46,8 @@ public abstract class StorefrontStoreContract {
     @Autowired protected SalesAnalyticsService salesAnalytics;
     @Autowired protected CatalogService catalog;
     @Autowired protected CatalogStore catalogStore;
+    @Autowired protected CustomerOrderActionStore customerActions;
+    @Autowired protected PaymentStore payments;
     private static final Address ADDRESS = new Address("Alice", "100 Modernization Way", "", "Pune",
             "Maharashtra", "411001", "India");
 
@@ -150,6 +156,64 @@ public abstract class StorefrontStoreContract {
         assertThat(store.product(id)).isEmpty();
         assertThat(store.products()).noneMatch(product -> product.id().equals(id));
         assertThat(catalogStore.product(id)).isPresent();
+    }
+
+    @Test @org.junit.jupiter.api.Order(18)
+    void paymentCancellationAndRefundLifecycleIsAtomicReplaySafeAndCustomerScoped() {
+        var cancelCustomer = unique("payment-cancel");
+        var product = store.product("FI-SW-01").orElseThrow();
+        var cancelCart = store.addToCart(cancelCustomer, store.cart(cancelCustomer).version(), product.id(), 1);
+        var cancellable = store.checkout(cancelCustomer, cancelCart.version(), unique("cancel-checkout"), ADDRESS,
+                Payment.APPROVED_DEMO_TOKEN);
+        var po = supplier.ensurePurchaseOrder(cancellable);
+        assertThat(payments.payments(cancelCustomer)).singleElement().satisfies(payment ->
+                assertThat(payment.status()).isEqualTo(Payment.Status.AUTHORIZED));
+
+        var cancelled = customerActions.cancel(cancelCustomer, cancellable.id(), cancellable.version(),
+                "cancel-command", "Customer changed their mind");
+        var cancelReplay = customerActions.cancel(cancelCustomer, cancellable.id(), cancellable.version(),
+                "cancel-command", "Customer changed their mind");
+        assertThat(cancelled.status()).isEqualTo(Order.CANCELLED);
+        assertThat(cancelReplay.version()).isEqualTo(cancelled.version());
+        assertThat(payments.payments(cancelCustomer)).singleElement().satisfies(payment ->
+                assertThat(payment.status()).isEqualTo(Payment.Status.VOIDED));
+        assertThat(store.product(product.id()).orElseThrow().stock()).isEqualTo(product.stock());
+        assertThat(supplier.purchaseOrders().stream().filter(value -> value.id().equals(po.id())).findFirst().orElseThrow().status())
+                .isEqualTo(SupplierPurchaseOrder.Status.CANCELLED);
+        assertThatThrownBy(() -> supplier.processPurchaseOrder(po.id(), po.version()))
+                .isInstanceOf(StoreConflictException.class);
+
+        var refundCustomer = unique("payment-refund");
+        var currentRefundProduct = store.product("AV-CB-01").orElseThrow();
+        var refundProduct = supplier.replaceInventory(currentRefundProduct.id(), currentRefundProduct.version(),
+                Math.max(1, currentRefundProduct.stock()), unique("refund-stock"));
+        var refundCart = store.addToCart(refundCustomer, store.cart(refundCustomer).version(), refundProduct.id(), 1);
+        var fulfillable = store.checkout(refundCustomer, refundCart.version(), unique("refund-checkout"), ADDRESS,
+                Payment.APPROVED_DEMO_TOKEN);
+        var ready = supplier.ensurePurchaseOrder(fulfillable);
+        supplier.processPurchaseOrder(ready.id(), ready.version());
+        var completed = store.orders(refundCustomer).getFirst();
+        assertThat(payments.payments(refundCustomer).getFirst().status()).isEqualTo(Payment.Status.CAPTURED);
+        var stockAfterFulfilment = store.product(refundProduct.id()).orElseThrow().stock();
+
+        var refunded = customerActions.refund(refundCustomer, completed.id(), completed.version(),
+                "refund-command", "Customer requested a refund");
+        var refundReplay = customerActions.refund(refundCustomer, completed.id(), completed.version(),
+                "refund-command", "Customer requested a refund");
+        assertThat(refunded.status()).isEqualTo(Order.REFUNDED);
+        assertThat(refundReplay.version()).isEqualTo(refunded.version());
+        assertThat(payments.payments(refundCustomer).getFirst().status()).isEqualTo(Payment.Status.REFUNDED);
+        assertThat(store.product(refundProduct.id()).orElseThrow().stock()).isEqualTo(stockAfterFulfilment);
+
+        var declinedCustomer = unique("payment-declined");
+        var before = store.product("RP-IG-01").orElseThrow();
+        var declinedCart = store.addToCart(declinedCustomer, store.cart(declinedCustomer).version(), before.id(), 1);
+        assertThatThrownBy(() -> store.checkout(declinedCustomer, declinedCart.version(), unique("declined"), ADDRESS,
+                Payment.DECLINED_DEMO_TOKEN)).isInstanceOf(PaymentDeclinedException.class);
+        assertThat(store.cart(declinedCustomer).lines()).hasSize(1);
+        assertThat(store.orders(declinedCustomer)).isEmpty();
+        assertThat(payments.payments(declinedCustomer)).isEmpty();
+        assertThat(store.product(before.id()).orElseThrow().stock()).isEqualTo(before.stock());
     }
 
     @Test @org.junit.jupiter.api.Order(2)
@@ -380,7 +444,7 @@ public abstract class StorefrontStoreContract {
         store.checkout(customer, cart.version(), "notification-key", ADDRESS);
 
         assertThat(notifications.notifications(customer)).extracting(CustomerNotification::type)
-                .containsExactly(CustomerNotification.Type.ORDER_PENDING);
+                .containsExactly(CustomerNotification.Type.PAYMENT_AUTHORIZED, CustomerNotification.Type.ORDER_PENDING);
 
         var approved = administrator.review(pending.id(), pending.version(), AdminOrderStore.Decision.APPROVED, "admin");
         administrator.review(pending.id(), pending.version(), AdminOrderStore.Decision.APPROVED, "admin");
@@ -392,7 +456,8 @@ public abstract class StorefrontStoreContract {
         var timeline = notifications.notifications(customer);
         assertThat(timeline).extracting(CustomerNotification::type)
                 .containsExactly(CustomerNotification.Type.ORDER_COMPLETED,
-                        CustomerNotification.Type.ORDER_APPROVED, CustomerNotification.Type.ORDER_PENDING);
+                        CustomerNotification.Type.PAYMENT_CAPTURED, CustomerNotification.Type.ORDER_APPROVED,
+                        CustomerNotification.Type.PAYMENT_AUTHORIZED, CustomerNotification.Type.ORDER_PENDING);
         assertThat(timeline).extracting(CustomerNotification::id).doesNotHaveDuplicates();
 
         var unread = timeline.getFirst();
@@ -417,7 +482,8 @@ public abstract class StorefrontStoreContract {
         assertThat(store.cart(customer).lines()).isEmpty();
         assertThat(supplier.backorders()).extracting(Order::id).contains(order.id());
         assertThat(notifications.notifications(customer)).extracting(CustomerNotification::type)
-                .containsExactly(CustomerNotification.Type.ORDER_BACKORDERED);
+                .containsExactly(CustomerNotification.Type.PAYMENT_AUTHORIZED,
+                        CustomerNotification.Type.ORDER_BACKORDERED);
 
         var replenished = supplier.replaceInventory(product.id(), product.version(), quantity,
                 unique("backorder-release"));
@@ -467,7 +533,7 @@ public abstract class StorefrontStoreContract {
         assertThat(notifications.notifications(customer)).extracting(CustomerNotification::type)
                 .containsExactlyInAnyOrder(CustomerNotification.Type.ORDER_BACKORDERED,
                         CustomerNotification.Type.ORDER_INVENTORY_ALLOCATED,
-                        CustomerNotification.Type.ORDER_PENDING);
+                        CustomerNotification.Type.ORDER_PENDING, CustomerNotification.Type.PAYMENT_AUTHORIZED);
     }
 
     private void checkoutOutcome(String customer, long version, CountDownLatch gate,

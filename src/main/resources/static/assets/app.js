@@ -1,4 +1,4 @@
-const state = { products: [], cart: null, notifications: [], myList: null, session: null, csrf: null, variantSelections: {} };
+const state = { products: [], cart: null, notifications: [], payments: [], myList: null, session: null, csrf: null, variantSelections: {} };
 const petIcons = { FISH: '🐠', DOGS: '🐕', CATS: '🐈', BIRDS: '🦜', REPTILES: '🦎' };
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -159,11 +159,14 @@ async function recoverCart(error) { toast(error.message, true); if (state.sessio
 
 async function checkout(event) {
   event.preventDefault();
-  const address = Object.fromEntries(new FormData(event.currentTarget));
+  const fields = Object.fromEntries(new FormData(event.currentTarget));
+  const paymentToken = fields.paymentToken;
+  delete fields.paymentToken;
+  const address = fields;
   const idempotencyKey = crypto.randomUUID();
   const submit = event.currentTarget.querySelector('[type=submit]'); submit.disabled = true;
   try {
-    const order = await api('/api/v1/orders', { method:'POST', headers:{'Idempotency-Key':idempotencyKey}, body:JSON.stringify({ expectedCartVersion:state.cart.version, address }) });
+    const order = await api('/api/v1/orders', { method:'POST', headers:{'Idempotency-Key':idempotencyKey}, body:JSON.stringify({ expectedCartVersion:state.cart.version, address, paymentToken }) });
     const message = order.status === 'BACKORDERED'
       ? `Order ${order.id.slice(0,8)} is backordered and will resume automatically after replenishment.`
       : order.status === 'PENDING'
@@ -174,10 +177,36 @@ async function checkout(event) {
 }
 async function loadOrders() {
   if (!state.session?.authenticated) return;
-  const [orders] = await Promise.all([api('/api/v1/orders'), loadNotifications()]);
-  document.querySelector('#orders-panel').innerHTML = orders.map(order => `<article class="order-card"><div><span class="eyebrow">${new Date(order.createdAt).toLocaleString()}</span><h3>Order ${escapeHtml(order.id.slice(0,8))}</h3></div><strong>${money(order.total)} · ${escapeHtml(order.status)}</strong>
+  const [orders, payments] = await Promise.all([api('/api/v1/orders'), api('/api/v1/payments'), loadNotifications()]);
+  state.payments = payments;
+  document.querySelector('#orders-panel').innerHTML = orders.map(order => {
+    const payment = payments.find(value => value.orderId === order.id);
+    const action = ['BACKORDERED','PENDING','APPROVED'].includes(order.status)
+      ? `<button class="order-action cancel" data-order-action="cancel" data-order-id="${escapeHtml(order.id)}" data-order-version="${order.version}">Cancel order</button>`
+      : order.status === 'COMPLETED' && payment?.status === 'CAPTURED'
+        ? `<button class="order-action refund" data-order-action="refund" data-order-id="${escapeHtml(order.id)}" data-order-version="${order.version}">Request refund</button>` : '';
+    return `<article class="order-card"><div><span class="eyebrow">${new Date(order.createdAt).toLocaleString()}</span><h3>Order ${escapeHtml(order.id.slice(0,8))}</h3></div><strong>${money(order.total)} · ${escapeHtml(order.status)}</strong>
     <div class="order-lines">${order.lines.map(line => `${escapeHtml(line.productName)} × ${line.quantity}`).join(' · ')}</div>
-    ${renderTimeline(order.id)}</article>`).join('') || '<p class="empty">No orders yet.</p>';
+    <div class="payment-state">Payment: <strong>${escapeHtml(payment?.status || 'LEGACY / NOT RECORDED')}</strong>${payment ? ` · ${escapeHtml(payment.methodLabel)}` : ''}</div>
+    ${action}${renderTimeline(order.id)}</article>`;
+  }).join('') || '<p class="empty">No orders yet.</p>';
+  document.querySelectorAll('[data-order-action]').forEach(button => button.addEventListener('click', () => customerOrderAction(button)));
+}
+async function customerOrderAction(button) {
+  const action = button.dataset.orderAction;
+  const verb = action === 'cancel' ? 'cancel this order and void its authorization' : 'refund this completed order';
+  if (!window.confirm(`Are you sure you want to ${verb}?`)) return;
+  button.disabled = true;
+  try {
+    await api(`/api/v1/orders/${encodeURIComponent(button.dataset.orderId)}/${action}`, {
+      method: 'POST', headers: {'Idempotency-Key': crypto.randomUUID()},
+      body: JSON.stringify({ expectedVersion: Number(button.dataset.orderVersion),
+        reason: action === 'cancel' ? 'Customer requested cancellation from storefront' : 'Customer requested refund from storefront' })
+    });
+    await Promise.all([loadCatalog(), loadOrders()]);
+    toast(action === 'cancel' ? 'Order cancelled and payment authorization voided.' : 'Payment refunded.');
+  } catch (error) { toast(error.message, true); await loadOrders().catch(() => {}); }
+  finally { button.disabled = false; }
 }
 async function loadNotifications() {
   if (!state.session?.authenticated || state.session.admin || state.session.supplier) return [];
@@ -224,7 +253,8 @@ async function markRead(button) {
   } finally { button.disabled = false; }
 }
 function notificationIcon(type) {
-  return ({ORDER_BACKORDERED:'↻', ORDER_INVENTORY_ALLOCATED:'✓', ORDER_PENDING:'⏳', ORDER_APPROVED:'✓', ORDER_DENIED:'×', ORDER_COMPLETED:'📦'})[type] || '•';
+  return ({ORDER_BACKORDERED:'↻', ORDER_INVENTORY_ALLOCATED:'✓', ORDER_PENDING:'⏳', ORDER_APPROVED:'✓', ORDER_DENIED:'×', ORDER_COMPLETED:'📦',
+    ORDER_CANCELLED:'×', ORDER_REFUNDED:'↩', PAYMENT_AUTHORIZED:'💳', PAYMENT_CAPTURED:'✓', PAYMENT_VOIDED:'⊘', PAYMENT_REFUNDED:'↩'})[type] || '•';
 }
 async function loadAccount() {
   const form = document.querySelector('#account-form');

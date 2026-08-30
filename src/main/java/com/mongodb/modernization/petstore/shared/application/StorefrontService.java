@@ -3,7 +3,10 @@ package com.mongodb.modernization.petstore.shared.application;
 import com.mongodb.modernization.petstore.cart.domain.Cart;
 import com.mongodb.modernization.petstore.catalog.domain.Product;
 import com.mongodb.modernization.petstore.orders.application.DuplicateCheckoutException;
+import com.mongodb.modernization.petstore.orders.application.CustomerOrderActionStore;
 import com.mongodb.modernization.petstore.orders.domain.Order;
+import com.mongodb.modernization.petstore.payments.application.PaymentStore;
+import com.mongodb.modernization.petstore.payments.domain.Payment;
 import com.mongodb.modernization.petstore.shared.domain.Address;
 import com.mongodb.modernization.petstore.supplier.application.SupplierService;
 import org.slf4j.Logger;
@@ -19,10 +22,15 @@ public class StorefrontService implements ApplicationRunner {
     private static final Logger LOG = LoggerFactory.getLogger(StorefrontService.class);
     private final StorefrontStore store;
     private final SupplierService supplier;
+    private final CustomerOrderActionStore orderActions;
+    private final PaymentStore payments;
 
-    public StorefrontService(StorefrontStore store, SupplierService supplier) {
+    public StorefrontService(StorefrontStore store, SupplierService supplier,
+                             CustomerOrderActionStore orderActions, PaymentStore payments) {
         this.store = store;
         this.supplier = supplier;
+        this.orderActions = orderActions;
+        this.payments = payments;
     }
 
     public List<Product> products() { return store.products(); }
@@ -45,6 +53,9 @@ public class StorefrontService implements ApplicationRunner {
         return cart;
     }
     public Order checkout(String customerId, long version, String key, Address address) {
+        return checkout(customerId, version, key, address, Payment.APPROVED_DEMO_TOKEN);
+    }
+    public Order checkout(String customerId, long version, String key, Address address, String paymentToken) {
         var existing = store.orderByIdempotencyKey(customerId, key);
         if (existing.isPresent()) {
             logOrder("order.idempotency.replayed", existing.get());
@@ -54,7 +65,7 @@ public class StorefrontService implements ApplicationRunner {
         Order order;
         var replayed = false;
         try {
-            order = store.checkout(customerId, version, key, address);
+            order = store.checkout(customerId, version, key, address, paymentToken);
         } catch (DuplicateCheckoutException duplicate) {
             // A concurrent request can win the unique idempotency-key insert after our first lookup.
             order = store.orderByIdempotencyKey(customerId, key).orElseThrow(() -> duplicate);
@@ -67,6 +78,19 @@ public class StorefrontService implements ApplicationRunner {
         return order;
     }
     public List<Order> orders(String customerId) { return store.orders(customerId); }
+    public List<Payment> payments(String customerId) { return payments.payments(customerId); }
+
+    public Order cancel(String customerId, String orderId, long expectedVersion, String key, String reason) {
+        var order = orderActions.cancel(customerId, orderId, expectedVersion, key, reason);
+        logCustomerAction("order.cancelled", order, key);
+        return order;
+    }
+
+    public Order refund(String customerId, String orderId, long expectedVersion, String key, String reason) {
+        var order = orderActions.refund(customerId, orderId, expectedVersion, key, reason);
+        logCustomerAction("order.refunded", order, key);
+        return order;
+    }
 
     @Override public void run(ApplicationArguments args) {
         store.seedIfEmpty();
@@ -95,5 +119,11 @@ public class StorefrontService implements ApplicationRunner {
 
     private void handOffApprovedOrder(Order order) {
         if (order.supplierReady()) supplier.ensurePurchaseOrder(order);
+    }
+
+    private static void logCustomerAction(String event, Order order, String key) {
+        LOG.atInfo().addKeyValue("event", event).addKeyValue("orderId", order.id())
+                .addKeyValue("customerId", order.customerId()).addKeyValue("orderVersion", order.version())
+                .addKeyValue("idempotencyKey", key).log("Customer order action completed");
     }
 }

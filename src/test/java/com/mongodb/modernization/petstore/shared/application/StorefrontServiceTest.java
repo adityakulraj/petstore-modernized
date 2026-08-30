@@ -3,6 +3,9 @@ package com.mongodb.modernization.petstore.shared.application;
 import com.mongodb.modernization.petstore.cart.domain.Cart;
 import com.mongodb.modernization.petstore.catalog.domain.Product;
 import com.mongodb.modernization.petstore.orders.domain.Order;
+import com.mongodb.modernization.petstore.orders.application.CustomerOrderActionStore;
+import com.mongodb.modernization.petstore.payments.application.PaymentStore;
+import com.mongodb.modernization.petstore.payments.domain.Payment;
 import com.mongodb.modernization.petstore.shared.domain.Address;
 import com.mongodb.modernization.petstore.supplier.application.SupplierService;
 import com.mongodb.modernization.petstore.supplier.application.SupplierStore;
@@ -24,7 +27,8 @@ class StorefrontServiceTest {
                 Order.APPROVED, address, List.of(), BigDecimal.ZERO, 0, null, null);
         var storefront = new ExistingOrderStore(order);
         var supplier = new RecordingSupplierStore();
-        var service = new StorefrontService(storefront, new SupplierService(supplier));
+        var service = new StorefrontService(storefront, new SupplierService(supplier),
+                new UnusedOrderActions(), new UnusedPayments());
 
         assertThat(service.checkout("alice", 7, "same-key", address)).isSameAs(order);
         assertThat(storefront.checkoutCalls).isZero();
@@ -55,6 +59,19 @@ class StorefrontServiceTest {
         @Override public List<Order> backorders() { return List.of(); }
         @Override public List<SupplierPurchaseOrder> purchaseOrders() { throw unsupported(); }
         @Override public SupplierPurchaseOrder processPurchaseOrder(String id, long version) { throw unsupported(); }
+    }
+
+    private static final class UnusedOrderActions implements CustomerOrderActionStore {
+        @Override public Order cancel(String customerId, String orderId, long version, String key, String reason) { throw unsupported(); }
+        @Override public Order refund(String customerId, String orderId, long version, String key, String reason) { throw unsupported(); }
+    }
+
+    private static final class UnusedPayments implements PaymentStore {
+        @Override public Payment authorize(Order order, String token, Instant when) { throw unsupported(); }
+        @Override public Payment capture(Order order, Instant when) { throw unsupported(); }
+        @Override public Payment voidAuthorization(Order order, Instant when) { throw unsupported(); }
+        @Override public Payment refund(Order order, Instant when) { throw unsupported(); }
+        @Override public List<Payment> payments(String customerId) { throw unsupported(); }
     }
 
     private static UnsupportedOperationException unsupported() { return new UnsupportedOperationException("Not used in this test"); }

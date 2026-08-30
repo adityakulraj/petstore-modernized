@@ -70,7 +70,7 @@ async function loadPurchaseOrders() {
     <div class="purchase-order-head"><div><p class="eyebrow">${new Date(po.createdAt).toLocaleString()}</p><h3>PO ${escapeHtml(po.id.slice(0, 8))}</h3><small>Customer ${escapeHtml(po.customerId)}</small></div>
       <span class="status ${po.status === 'PROCESSED' ? 'processed' : ''}">${escapeHtml(po.status)}</span></div>
     <div class="po-lines">${po.lines.map(line => `${escapeHtml(line.productName)} × ${line.quantity}`).join(' · ')}</div>
-    <button class="process-order" data-process="${escapeHtml(po.id)}" ${po.status === 'PROCESSED' ? 'disabled' : ''}>${po.status === 'PROCESSED' ? 'Processed' : 'Process purchase order'}</button>
+    <button class="process-order" data-process="${escapeHtml(po.id)}" ${po.status !== 'READY' ? 'disabled' : ''}>${po.status === 'READY' ? 'Process purchase order' : escapeHtml(po.status === 'PROCESSED' ? 'Processed' : 'Cancelled by customer')}</button>
   </article>`).join('') || '<p class="empty">No supplier purchase orders yet. Place a storefront order to create one.</p>';
   document.querySelectorAll('[data-process]').forEach(button => button.addEventListener('click', () => processPurchaseOrder(button.dataset.process, button)));
 }

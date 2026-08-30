@@ -39,7 +39,11 @@ stateDiagram-v2
     end note
 ```
 
-Orders below `$500.00` produce `ORDER_APPROVED` at checkout. Orders at or above the threshold first produce `ORDER_PENDING`, then exactly one `ORDER_APPROVED` or `ORDER_DENIED`. An unavailable order produces `ORDER_BACKORDERED`; successful replenishment adds `ORDER_INVENTORY_ALLOCATED` followed by the normal `ORDER_APPROVED` or `ORDER_PENDING` policy event. Supplier completion adds `ORDER_COMPLETED`.
+Every successful checkout first produces `PAYMENT_AUTHORIZED`. Orders below `$500.00` also produce `ORDER_APPROVED`; orders at or above the threshold produce `ORDER_PENDING`, then exactly one `ORDER_APPROVED` or `ORDER_DENIED`. An unavailable order produces `ORDER_BACKORDERED`; successful replenishment adds `ORDER_INVENTORY_ALLOCATED` followed by the normal `ORDER_APPROVED` or `ORDER_PENDING` policy event. Supplier completion adds `PAYMENT_CAPTURED` and `ORDER_COMPLETED`. Customer cancellation adds `PAYMENT_VOIDED` and `ORDER_CANCELLED`; completed-order refund adds `PAYMENT_REFUNDED` and `ORDER_REFUNDED`.
+
+For the complete backordered-checkout transaction, MongoDB and Oracle representations, replenishment release algorithm, delivery semantics, and customer timeline, see [Backorders and supplier replenishment](feature-backorder-replenishment.md).
+
+For payment, cancellation, and refund state machines and atomic boundaries, see [Payment, customer cancellation, and refund lifecycle](feature-payment-cancellation-refund.md).
 
 ## Transactional outbox boundary
 
@@ -107,9 +111,9 @@ Use `http://localhost:8080` for MongoDB or `http://localhost:8081` for Oracle.
 2. Add **Bulldog** (`$850`) and check out. The order is `PENDING`; **Inbox** shows **Order awaiting review** and its badge becomes 1.
 3. In a private window, open `/admin/orders.html`, sign in as `admin` / `admin`, and approve the order.
 4. Open `/supplier/`, sign in as `supplier` / `supplier`, open **Purchase orders**, and process the new PO.
-5. Return to Alice, open **Inbox**, and confirm exactly three cards: awaiting review, approved, and completed.
+5. Return to Alice, open **Inbox**, and confirm exactly five cards: payment authorized, awaiting review, approved, payment captured, and completed.
 6. Click **Mark read** and confirm the badge decreases. Refresh; the read state remains.
-7. Open **Orders** and confirm the same three events appear chronologically beneath the order.
+7. Open **Orders** and confirm the same five events appear chronologically beneath the order.
 8. Optionally open `/admin/health.html` and inspect `notifications.*` database operations, then search logs for `notification.delivery`.
 
 Automated coverage and exact commands are in [the testing guide](../e2e/README.md).

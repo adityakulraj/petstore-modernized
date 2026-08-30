@@ -15,6 +15,8 @@ public record Order(String id, String customerId, String idempotencyKey, Instant
     public static final String APPROVED = "APPROVED";
     public static final String DENIED = "DENIED";
     public static final String COMPLETED = "COMPLETED";
+    public static final String CANCELLED = "CANCELLED";
+    public static final String REFUNDED = "REFUNDED";
 
     public Order {
         lines = List.copyOf(lines);
@@ -45,5 +47,9 @@ public record Order(String id, String customerId, String idempotencyKey, Instant
 
     public boolean supplierReady() {
         return APPROVED.equals(status) || COMPLETED.equals(status);
+    }
+
+    public boolean cancellable() {
+        return BACKORDERED.equals(status) || PENDING.equals(status) || APPROVED.equals(status);
     }
 }

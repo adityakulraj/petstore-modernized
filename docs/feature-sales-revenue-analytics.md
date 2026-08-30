@@ -11,7 +11,7 @@ Evidence in the supplied source tree:
 - `src/apps/admin/src/client/com/sun/j2ee/blueprints/admin/client/PieChartPanel.java`
 - `src/apps/admin/src/client/com/sun/j2ee/blueprints/admin/client/DataSource.java`
 
-The modern dashboard retains the date range, quantity/revenue calculations, category view, and item drilldown. It makes one accounting distinction explicit: **recognized revenue** contains `APPROVED` and `COMPLETED` orders, while `PENDING` value is displayed separately as pipeline. `DENIED` and `BACKORDERED` orders remain visible in the status mix but do not inflate revenue.
+The modern dashboard retains the date range, quantity/revenue calculations, category view, and item drilldown. It makes one accounting distinction explicit: **recognized revenue** contains `APPROVED` and `COMPLETED` orders, while `PENDING` value is displayed separately as pipeline. `DENIED`, `BACKORDERED`, `CANCELLED`, and `REFUNDED` orders remain visible in the status mix but do not inflate revenue. Consequently, a completed order leaves recognized revenue when its customer refund commits.
 
 ## Administrator flow
 
@@ -33,7 +33,7 @@ sequenceDiagram
     Service->>Orders: Read orders in [from, to + 1 day)
     Orders->>DB: CREATED_AT range query
     DB-->>Orders: Immutable order and line snapshots
-    Service->>Service: Separate recognized, pipeline, denied, backordered
+    Service->>Service: Separate recognized, pipeline, denied/backordered/cancelled/refunded
     Service->>Service: Aggregate daily, category/item, and status views
     Service-->>UI: Summary + series + breakdown
     UI-->>Admin: Cards, SVG trend, bars, status mix, table
@@ -48,7 +48,7 @@ flowchart TD
     MATCH -- Yes --> STATUS{"Order status"}
     STATUS -- "APPROVED or COMPLETED" --> RECOGNIZE["Recognized revenue and units"]
     STATUS -- PENDING --> PIPELINE["Pending pipeline value only"]
-    STATUS -- "BACKORDERED or DENIED" --> MIX["Status mix only"]
+    STATUS -- "BACKORDERED, DENIED, CANCELLED, or REFUNDED" --> MIX["Status mix only"]
     RECOGNIZE --> TOP{"Category selected?"}
     TOP -- No --> CATEGORY["Group by category"]
     TOP -- Yes --> ITEM["Group by item/SKU and variant name"]

@@ -7,9 +7,9 @@ This is the source-of-truth inventory for the automated test suite. The same Pla
 | Layer | MongoDB | Oracle | Command |
 |---|---:|---:|---|
 | Java unit + persistence integration | Yes | Yes | `./mvnw verify` |
-| API E2E only | 27 tests | 27 tests | `npm run e2e:api:mongo`, `npm run e2e:api:oracle` |
-| API + real-browser E2E | 39 tests | 39 tests | `npm run e2e:mongo`, `npm run e2e:oracle` |
-| Both API implementations | 54 executions | — | `npm run e2e:api:all` |
+| API E2E only | 28 tests | 28 tests | `npm run e2e:api:mongo`, `npm run e2e:api:oracle` |
+| API + real-browser E2E | 41 tests | 41 tests | `npm run e2e:mongo`, `npm run e2e:oracle` |
+| Both API implementations | 56 executions | — | `npm run e2e:api:all` |
 
 Install prerequisites once:
 
@@ -26,17 +26,17 @@ npm run e2e:mongo
 npm run e2e:oracle
 ```
 
-`./mvnw verify` currently executes 66 JUnit tests: 32 unit/service/telemetry tests plus the 17-test persistence contract against each database. The two full Playwright runs execute 78 tests. Together, the matrix is 144 test executions across 88 unique specifications.
+`./mvnw verify` currently executes 70 JUnit tests: 34 unit/service/telemetry tests plus the 18-test persistence contract against each database. The two full Playwright runs execute 82 tests. Together, the matrix is 152 test executions across 93 unique specifications.
 
-Latest local verification (August 26, 2026):
+Latest local verification (August 27, 2026):
 
 | Command | Result |
 |---|---:|
-| Java unit/service tests | 32 passed |
-| MongoDB persistence contract | 17 passed |
-| Oracle persistence contract | 17 passed |
-| MongoDB API + Chromium E2E | All 39 passed across the full run plus the isolated retry of one Docker-fixture setup timeout; catalog browser journey and role-switch regression passed in the full run |
-| Oracle API + Chromium E2E | 38 previously passed; new shared role-switch regression pending the next isolated Oracle matrix run |
+| Java unit/service tests | 34 passed |
+| MongoDB persistence contract | 18 passed |
+| Oracle persistence contract | 18 passed |
+| MongoDB API + Chromium E2E | 41 passed in one uninterrupted isolated run |
+| Oracle API + Chromium E2E | 41 passed in one uninterrupted isolated run; the normal Oracle database was stopped first so only one Oracle instance used Docker memory |
 | Live MongoDB service on port 8080 | Healthy; dashboard created `K9-CT-01` and persisted its audit entry |
 | Live Oracle service on port 8081 | Healthy on ARM-native Oracle 23.9 with the same catalog/session build |
 
@@ -46,7 +46,7 @@ The E2E runner creates only `petstore-e2e-mongo` or `petstore-e2e-oracle`, using
 
 Before and after every API or browser test, the fixture:
 
-1. Deletes all carts, MyList favourites, customer orders, customer notifications, supplier inventory-command records, supplier purchase orders, catalog audit rows, test-created catalog items, line snapshots, and non-demo customer accounts from the disposable database.
+1. Deletes all carts, MyList favourites, customer orders, payments, customer cancel/refund command records, customer notifications, supplier inventory-command records, supplier purchase orders, catalog audit rows, test-created catalog items, line snapshots, and non-demo customer accounts from the disposable database.
 2. Restores all eight seeded item/SKU stock values, active state, and versions to zero.
 3. Calls the public catalog API and asserts every stock/version value.
 4. Repeats the reset and assertion in a `finally` block even when the test fails.
@@ -92,16 +92,17 @@ Every row below runs against both MongoDB and Oracle. The link points to the exe
 | 17 | [Concurrent same-key idempotency race](./api-contract.spec.js#L533) | Two sessions checkout the same cart with one key concurrently; both receive 201 with the same order ID; only one order is stored; stock and inventory version change exactly once. |
 | 18 | [Customer-scoped idempotency and history](./api-contract.spec.js#L554) | Alice and Aditya reuse the same idempotency key; distinct orders are created because uniqueness includes customer ID; each user sees only their own order; stock decrements twice. |
 | 19 | [Administrator approval lifecycle](./api-contract.spec.js) | Anonymous/customer access is rejected; a high-value checkout stays `PENDING` without a supplier PO; duplicate approvals converge on one version and one PO; an opposite decision conflicts; denial replay restores reserved stock exactly once and never creates a PO; CSRF remains mandatory. |
-| 20 | [Supplier authorization, inventory, and purchase-order processing](./api-contract.spec.js) | Anonymous/customer access is rejected; `supplier/supplier` receives only the supplier role; inventory PUT is replay-safe and rejects a stale competing value; checkout creates exactly one PO; two simultaneous processing requests both converge on one `PROCESSED` version; the customer order becomes `COMPLETED`; CSRF remains mandatory. |
+| 20 | [Supplier authorization, inventory, and purchase-order processing](./api-contract.spec.js) | Anonymous/customer access is rejected; `supplier/supplier` receives only the supplier role; inventory PUT is replay-safe and rejects a stale competing value; checkout creates exactly one PO; two simultaneous processing requests both converge on one `PROCESSED` version; the customer order becomes `COMPLETED` and its payment becomes `CAPTURED`; CSRF remains mandatory. |
 | 21 | [Supplier replenishment releases a backorder exactly once](./api-contract.spec.js#L702) | Supplier-only backorder listing exposes the waiting order; two concurrent same-key inventory commands converge on one durable result; stock is reserved once, one PO is created, and the customer timeline contains one backordered/allocation/approval event each. |
-| 22 | [Customer notification outbox lifecycle](./api-contract.spec.js) | Checkout, duplicate checkout, approval replay, supplier completion replay, and read replay produce exactly three deterministic events; customer isolation returns an empty inbox/404; administrator access is forbidden; delivery state remains auditable. |
+| 22 | [Customer notification outbox lifecycle](./api-contract.spec.js) | Checkout, duplicate checkout, approval replay, supplier completion replay, and read replay produce exactly five deterministic order/payment events; customer isolation returns an empty inbox/404; administrator access is forbidden; delivery state remains auditable. |
 | 23 | [Customer account lifecycle](./api-contract.spec.js) | Invalid registration is rejected; a valid account is persisted without exposing its password hash; duplicates conflict; the new credentials authenticate; profile read/update persists address and preferences; CSRF remains mandatory. |
 | 24 | [MyList isolation, retries, and recommendations](./api-contract.spec.js) | Anonymous access is rejected; customer starts with category-based suggestions; simultaneous duplicate favourite adds converge on one row; the sibling Bulldog variant is recommended first; users are isolated; unknown items and missing CSRF are rejected; duplicate removes are replay-safe. |
 | 25 | [Administrator sales and revenue analytics](./api-contract.spec.js) | Anonymous/customer access is rejected; an approved sale is recognized while a pending order remains pipeline; category totals and DOGS item drilldown are exact; reversed/overlong ranges are rejected; unknown categories return 404; the friendly page alias is protected. |
 | 26 | [Administrator catalog and price lifecycle](./api-contract.spec.js) | Admin-only/CSRF enforcement; natural create replay; stock remains supplier-owned; price changes share the product version; stale competing changes conflict; identical replay converges; cart quotes survive repricing/archiving; public archive visibility and durable audit ordering are exact. |
 | 27 | [Admin role switch with cached Basic credentials](./api-contract.spec.js) | Basic admin auth can read a diagnostic API without being saved over an active customer form session; the customer remains a customer and receives 403 for the admin page. After an explicit CSRF-protected logout and form login as admin, subsequent same-origin catalog calls retain the admin role. Basic auth remains request-only and limited to the two read-only diagnostic APIs. |
+| 28 | [Payment authorization, customer cancellation, capture, and refund](./api-contract.spec.js#L1077) | Checkout stores one masked `AUTHORIZED` payment and emits one event; a replay cannot authorize twice. Eligible cancellation is idempotent, restores reserved stock once, cancels the ready PO, and changes payment to `VOIDED`. Supplier processing captures another payment; completed-order refund is replay-safe, changes order/payment to `REFUNDED`, and does not invent a stock return. A declined token rolls back cart/order/payment/inventory atomically, and users cannot see one another's payments. |
 
-All application HTTP endpoints are exercised: `GET /api/v1/session`, `GET /api/v1/csrf`, all three catalog routes, MyList list/add/remove routes, `GET /api/v1/cart`, all three cart mutation routes, `GET/POST /api/v1/orders`, notification list/read routes, supplier inventory and purchase-order routes, administrator order list/decision routes, `GET /api/v1/admin/analytics/sales`, `GET /api/v1/admin/logs`, `GET /api/v1/admin/health`, non-health Actuator authorization, `/supplier/`, `/admin/orders.html`, `/admin/sales.html`, `/admin/health.html`, `/login`, and `/logout`.
+All application HTTP endpoints are exercised: `GET /api/v1/session`, `GET /api/v1/csrf`, all three catalog routes, MyList list/add/remove routes, `GET /api/v1/cart`, all three cart mutation routes, `GET/POST /api/v1/orders`, `POST /api/v1/orders/{id}/cancel`, `POST /api/v1/orders/{id}/refund`, `GET /api/v1/payments`, notification list/read routes, supplier inventory and purchase-order routes, administrator order list/decision routes, `GET /api/v1/admin/analytics/sales`, `GET /api/v1/admin/logs`, `GET /api/v1/admin/health`, non-health Actuator authorization, `/supplier/`, `/admin/orders.html`, `/admin/sales.html`, `/admin/health.html`, `/login`, and `/logout`.
 
 Run one API scenario against one store, for example:
 
@@ -124,11 +125,12 @@ These tests use a real Chromium instance and the same before/after inventory fix
 | 5 | [Administrator approval-queue journey](./petstore.spec.js) | A high-value checkout creates a pending order; anonymous navigation resumes after `admin/admin` login; the live summary and order card render; approving removes it from pending, adds it to history, and confirms supplier release. |
 | 6 | [Supplier portal journey](./petstore.spec.js) | A storefront checkout creates a PO; anonymous portal navigation resumes after `supplier/supplier` login; eight item inventory rows render; an inventory update persists; the PO is visible and can be processed to `PROCESSED`. |
 | 7 | [Visible backorder and replenishment journey](./petstore.spec.js#L132) | A customer creates a Tiger Shark backorder; the supplier sees it, replenishes inventory, sees it disappear and one PO appear, then processes the PO; the customer sees allocation and completion in the inbox. |
-| 8 | [Customer notification and timeline journey](./petstore.spec.js) | A high-value order moves through checkout, admin approval, and supplier processing; the customer sees exactly three inbox cards, clears one unread badge, and sees three ordered timeline steps. |
+| 8 | [Customer notification and timeline journey](./petstore.spec.js) | A high-value order moves through checkout, admin approval, and supplier processing; the customer sees exactly five payment/order inbox cards, clears one unread badge, and sees five ordered timeline steps. |
 | 9 | [Customer account browser journey](./petstore.spec.js) | A visitor registers through the UI, signs in with the new credentials, sees the persisted profile, updates it, reloads, and sees the update retained. |
 | 10 | [Item variant and MyList browser journey](./petstore.spec.js) | Alice selects Female Puppy on the grouped Bulldog card, saves that exact SKU, sees Male Adult Bulldog recommended, adds the favourite to cart, and sees the full variant name in the cart snapshot. |
 | 11 | [Administrator sales dashboard journey](./petstore.spec.js) | Accepted and pending orders are created; `admin/admin` resumes the protected dashboard; recognized/pipeline cards, SVG trend, statuses, and category rows render; clicking Birds drills down to the Canary item. |
 | 12 | [Administrator catalog dashboard journey](./petstore.spec.js) | `admin/admin` opens the protected catalog dashboard, creates a zero-stock SKU, reprices and archives it, sees its audit entry, and confirms the archived item is absent from the public API. |
+| 13 | [Payment cancellation and refund browser journey](./petstore.spec.js) | A real customer checkout displays `AUTHORIZED`, cancellation changes the order/payment to `CANCELLED`/`VOIDED`, supplier completion changes a second order/payment to `COMPLETED`/`CAPTURED`, and the customer refunds it to `REFUNDED`; the matching in-app events render throughout. |
 
 ## Java unit and service coverage
 
@@ -148,6 +150,7 @@ These tests use a real Chromium instance and the same before/after inventory fix
 | [Administrator decision orchestration](../src/test/java/com/mongodb/modernization/petstore/orders/application/AdminOrderServiceTest.java) | Approval triggers the idempotent supplier handoff; denial does not. |
 | [Security creates encoded, role-separated users](../src/test/java/com/mongodb/modernization/petstore/config/SecurityConfigTest.java#L10) | Customer, administrator, and supplier passwords match their BCrypt hashes and each principal has only its intended role. |
 | [Supplier PO snapshot and idempotent transition](../src/test/java/com/mongodb/modernization/petstore/supplier/domain/SupplierPurchaseOrderTest.java) | An immutable PO snapshots the customer order; `READY` becomes `PROCESSED`; repeating the domain transition has no effect. |
+| [Payment state machine and secret handling](../src/test/java/com/mongodb/modernization/petstore/payments/domain/PaymentTest.java) | Approved token creates a masked authorization with no token/card storage; capture/refund and authorization/void paths enforce valid states; declined and unknown tokens fail before persistence. |
 | [Deterministic notification event identity](../src/test/java/com/mongodb/modernization/petstore/notifications/domain/CustomerNotificationTest.java) | An order/type transition always produces the same durable ID and starts in a due, pending delivery state. |
 | [Distinct backorder notification identities](../src/test/java/com/mongodb/modernization/petstore/notifications/domain/CustomerNotificationTest.java) | Backordered and inventory-allocated events use distinct deterministic IDs and customer-facing messages. |
 | [Notification delivery acknowledgement and retry](../src/test/java/com/mongodb/modernization/petstore/notifications/application/NotificationDeliveryServiceTest.java) | Success is conditionally acknowledged; failure records a bounded error and exponential due time; backoff caps at five minutes. |
@@ -181,6 +184,7 @@ Each test below runs once through `MongoStorefrontStore` and once through `Oracl
 | [Sales analytics persistence parity](../src/test/java/com/mongodb/modernization/petstore/persistence/StorefrontStoreContract.java) | A real accepted sale appears as an exact units/revenue delta through the MongoDB and Oracle date-range readers, with category-to-item drilldown. |
 | [Replay-safe catalog creation and repricing](../src/test/java/com/mongodb/modernization/petstore/persistence/StorefrontStoreContract.java) | Natural SKU replay creates one item/audit; supplier stock and catalog price share the optimistic version; stale competing edits conflict; a cart retains its quoted price. |
 | [Archived storefront visibility](../src/test/java/com/mongodb/modernization/petstore/persistence/StorefrontStoreContract.java) | Archiving removes an item from customer catalog lookup/listing while the administrative catalog retains it. |
+| [Atomic payment, cancellation, and refund lifecycle](../src/test/java/com/mongodb/modernization/petstore/persistence/StorefrontStoreContract.java) | Cancellation replay voids once, restores reserved stock once, and makes a ready PO unprocessable; completion captures payment and refund replay reverses it without restocking; a decline rolls back cart, order, payment, notification, and inventory changes. |
 
 ## Failure artifacts and diagnostics
 
@@ -195,5 +199,6 @@ Each test below runs once through `MongoStorefrontStore` and once through `Oracl
 - The notification outbox, retry model, inbox/timeline, and manual walkthrough are in [feature-customer-notifications.md](../docs/feature-customer-notifications.md).
 - The administrator sales calculations, diagrams, indexing, API, and manual walkthrough are in [feature-sales-revenue-analytics.md](../docs/feature-sales-revenue-analytics.md).
 - Catalog ownership, idempotency/concurrency diagrams, price snapshots, APIs, and walkthrough are in [feature-catalog-price-management.md](../docs/feature-catalog-price-management.md).
+- Payment/cancellation/refund state machines, transactional boundaries, schema, race guarantees, and UI walkthrough are in [feature-payment-cancellation-refund.md](../docs/feature-payment-cancellation-refund.md).
 
 The E2E suites use one worker because the reset fixture owns one disposable database. Concurrency is created deliberately inside the race tests with simultaneous requests/threads, so serial test scheduling does not reduce race-condition coverage.

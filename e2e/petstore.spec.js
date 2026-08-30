@@ -19,7 +19,7 @@ test('customer can browse, sign in, add to cart, checkout, and see order history
 
   await page.getByRole('button', { name: 'Checkout' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await page.getByRole('button', { name: 'Place order once' }).click();
+  await page.getByRole('button', { name: /Authorize payment/ }).click();
   await expect(page.getByText(/Order .* placed/)).toBeVisible();
   await expect(page.locator('.order-card')).toHaveCount(1);
   await expect(page.locator('.product-card').first()).toContainText('9 AVAILABLE');
@@ -164,7 +164,7 @@ test('supplier replenishment visibly releases a customer backorder exactly once'
   await page.locator('[data-qty="FI-SW-02"]').blur();
   await expect(page.locator('[data-qty="FI-SW-02"]')).toHaveValue('13');
   await page.getByRole('button', { name: 'Checkout' }).click();
-  await page.getByRole('button', { name: 'Place order once' }).click();
+  await page.getByRole('button', { name: /Authorize payment/ }).click();
   await expect(page.getByRole('status')).toContainText('backordered');
   await expect(page.locator('.order-card')).toContainText('BACKORDERED');
 
@@ -201,7 +201,7 @@ test('supplier replenishment visibly releases a customer backorder exactly once'
   }
 
   await page.getByRole('button', { name: /Inbox/ }).click();
-  await expect(page.locator('.notification-card')).toHaveCount(4);
+  await expect(page.locator('.notification-card')).toHaveCount(6);
   await expect(page.locator('#notifications-panel')).toContainText('Order backordered');
   await expect(page.locator('#notifications-panel')).toContainText('Inventory allocated');
   await expect(page.locator('#notifications-panel')).toContainText('Order completed');
@@ -219,7 +219,7 @@ test('customer sees a durable order timeline and can clear the inbox badge', asy
     await dog.getByRole('button', { name: 'Add to cart' }).click();
     await page.getByRole('button', { name: /Cart/ }).click();
     await page.getByRole('button', { name: 'Checkout' }).click();
-    await page.getByRole('button', { name: 'Place order once' }).click();
+    await page.getByRole('button', { name: /Authorize payment/ }).click();
     await expect(page.locator('.order-card')).toContainText('PENDING');
     const orders = await (await page.request.get('/api/v1/orders')).json();
     const pending = orders[0];
@@ -242,16 +242,16 @@ test('customer sees a durable order timeline and can clear the inbox badge', asy
     });
 
     await page.getByRole('button', { name: /Inbox/ }).click();
-    await expect(page.locator('.notification-card')).toHaveCount(3);
+    await expect(page.locator('.notification-card')).toHaveCount(5);
     await expect(page.locator('#notifications-panel')).toContainText('Order awaiting review');
     await expect(page.locator('#notifications-panel')).toContainText('Order approved');
     await expect(page.locator('#notifications-panel')).toContainText('Order completed');
     const unreadBefore = Number(await page.locator('#notification-count').textContent());
-    expect(unreadBefore).toBe(3);
+    expect(unreadBefore).toBe(5);
     await page.locator('.notification-card').first().getByRole('button', { name: 'Mark read' }).click();
-    await expect(page.locator('#notification-count')).toHaveText('2');
+    await expect(page.locator('#notification-count')).toHaveText('4');
     await page.getByRole('button', { name: 'Orders' }).click();
-    await expect(page.locator('.order-timeline li')).toHaveCount(3);
+    await expect(page.locator('.order-timeline li')).toHaveCount(5);
   } finally {
     await admin.dispose();
     await supplier.dispose();
@@ -371,4 +371,58 @@ test('admin can create, reprice, and archive an item from the catalog dashboard'
   await expect(card).toContainText('ARCHIVED');
   await expect(page.locator('#change-history')).toContainText('CT-UI-01');
   expect((await page.request.get('/api/v1/catalog/products/CT-UI-01')).status()).toBe(404);
+});
+
+test('customer can cancel an authorized order and refund a captured order from the storefront', async ({ page, playwright }) => {
+  await page.goto('/login');
+  await page.locator('input[name="username"]').fill('alice');
+  await page.locator('input[name="password"]').fill('petstore-demo');
+  await page.getByRole('button', { name: /sign in/i }).click();
+
+  const canary = page.locator('.product-card').filter({ hasText: 'Canary' });
+  await canary.getByRole('button', { name: 'Add to cart' }).click();
+  await page.getByRole('button', { name: /Cart/ }).click();
+  await page.getByRole('button', { name: 'Checkout' }).click();
+  await expect(page.getByLabel('Payment method')).toHaveValue('tok_demo_visa');
+  await page.getByRole('button', { name: /Authorize payment/ }).click();
+  const firstCard = page.locator('.order-card').first();
+  await expect(firstCard).toContainText('Payment: AUTHORIZED');
+  page.once('dialog', dialog => dialog.accept());
+  await firstCard.getByRole('button', { name: 'Cancel order' }).click();
+  await expect(firstCard).toContainText('CANCELLED');
+  await expect(firstCard).toContainText('Payment: VOIDED');
+
+  const csrf = await (await page.request.get('/api/v1/csrf')).json();
+  let cart = await (await page.request.get('/api/v1/cart')).json();
+  cart = await (await page.request.post('/api/v1/cart/items', {
+    headers: { [csrf.headerName]: csrf.token },
+    data: { productId: 'FI-SW-01', quantity: 1, expectedVersion: cart.version }
+  })).json();
+  const fulfillable = await (await page.request.post('/api/v1/orders', {
+    headers: { [csrf.headerName]: csrf.token, 'Idempotency-Key': 'browser-payment-refund' },
+    data: { expectedCartVersion: cart.version, address: ADDRESS_FOR_BROWSER, paymentToken: 'tok_demo_visa' }
+  })).json();
+
+  const supplier = await playwright.request.newContext({ baseURL: process.env.BASE_URL });
+  try {
+    const loginPage = await supplier.get('/login');
+    const loginToken = (await loginPage.text()).match(/name="_csrf"[^>]*value="([^"]+)"/)[1];
+    await supplier.post('/login', { form: { username: 'supplier', password: 'supplier', _csrf: loginToken } });
+    const supplierCsrf = await (await supplier.get('/api/v1/csrf')).json();
+    const purchaseOrders = await (await supplier.get('/api/v1/supplier/purchase-orders')).json();
+    const po = purchaseOrders.find(item => item.orderId === fulfillable.id);
+    const processed = await supplier.post(`/api/v1/supplier/purchase-orders/${po.id}/process`, {
+      headers: { [supplierCsrf.headerName]: supplierCsrf.token }, data: { expectedVersion: po.version }
+    });
+    expect(processed.status()).toBe(200);
+  } finally { await supplier.dispose(); }
+
+  await page.getByRole('button', { name: 'Orders' }).click();
+  const secondCard = page.locator('.order-card').filter({ hasText: fulfillable.id.slice(0, 8) });
+  await expect(secondCard).toContainText('COMPLETED');
+  await expect(secondCard).toContainText('Payment: CAPTURED');
+  page.once('dialog', dialog => dialog.accept());
+  await secondCard.getByRole('button', { name: 'Request refund' }).click();
+  await expect(secondCard).toContainText('REFUNDED');
+  await expect(secondCard).toContainText('Payment: REFUNDED');
 });

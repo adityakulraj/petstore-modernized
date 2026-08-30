@@ -3,6 +3,7 @@ package com.mongodb.modernization.petstore.shared.application;
 import com.mongodb.modernization.petstore.cart.domain.Cart;
 import com.mongodb.modernization.petstore.catalog.domain.Product;
 import com.mongodb.modernization.petstore.orders.domain.Order;
+import com.mongodb.modernization.petstore.payments.domain.Payment;
 import com.mongodb.modernization.petstore.shared.domain.Address;
 
 import java.util.List;
@@ -17,6 +18,10 @@ public interface StorefrontStore {
     Cart updateCart(String customerId, long expectedVersion, String productId, int quantity);
     Cart removeFromCart(String customerId, long expectedVersion, String productId);
     Order checkout(String customerId, long expectedCartVersion, String idempotencyKey, Address address);
+    default Order checkout(String customerId, long expectedCartVersion, String idempotencyKey, Address address,
+                           String paymentToken) {
+        return checkout(customerId, expectedCartVersion, idempotencyKey, address);
+    }
     Optional<Order> orderByIdempotencyKey(String customerId, String idempotencyKey);
     List<Order> orders(String customerId);
     void seedIfEmpty();

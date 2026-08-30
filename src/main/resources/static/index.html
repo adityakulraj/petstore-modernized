@@ -100,8 +100,15 @@
             <label>State<input name="state" value="Maharashtra" required maxlength="80"></label>
             <label>Postal code<input name="postalCode" value="411001" required maxlength="20"></label>
             <label>Country<input name="country" value="India" required maxlength="80"></label>
+            <label class="wide">Payment method
+                <select name="paymentToken" required>
+                    <option value="tok_demo_visa">Demo Visa ending 4242 — approve</option>
+                    <option value="tok_demo_declined">Demo card — decline for testing</option>
+                </select>
+            </label>
         </div>
-        <button class="primary full-width" type="submit">Place order once</button>
+        <p class="payment-note">Only an opaque demo token is submitted. Card numbers and security codes are never collected or stored.</p>
+        <button class="primary full-width" type="submit">Authorize payment and place order once</button>
     </form>
 </dialog>
 <div id="toast" role="status" aria-live="polite"></div>
