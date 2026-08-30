@@ -9,13 +9,6 @@ APP_STORE=mongo   # MongoDB documents, transactions, and @Version
 
 The application uses Spring Boot 4.1.x, a modular-monolith package structure, same-origin storefront, administrator, and supplier UIs, externalized configuration, health probes, idempotent checkout and supplier/customer commands, atomic backorders/replenishment, an explicit payment lifecycle, customer cancellation/refund, conditional inventory updates, optimistic concurrency, persisted customer accounts, and a transactional in-app notification outbox.
 
-The canonical, speaker-ready explanation of the complete effort—including every
-API, security boundary, Oracle/MongoDB schema choice, transaction and race
-guarantee, observability surface, test layer, design rationale, demo script, and
-feature-update checklist—is [the modernization deep-dive script](docs/modernization-deep-dive-script.md).
-Feature work is incomplete until that living document and the executable test
-matrix are reconciled.
-
 ## Fastest run: Docker Compose
 
 Prerequisites: Docker Desktop with at least 6 GB available memory. Oracle needs more startup time and memory than MongoDB.
