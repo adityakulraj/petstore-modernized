@@ -6,8 +6,10 @@ import java.math.BigDecimal;
 import java.util.List;
 
 public final class SeedProducts {
+    /** Prevents instantiation of the static seed-catalog factory. */
     private SeedProducts() {}
 
+    /** Returns the deterministic initial catalog shared by both database implementations. */
     public static List<Product> all() {
         return List.of(
                 product("FI-SW-01", "FI-SW", "Standard", "FISH", "Fish", "Angelfish", "A peaceful freshwater aquarium favorite.", "16.50", 25),
@@ -21,6 +23,7 @@ public final class SeedProducts {
         );
     }
 
+    /** Creates a seed product from readable string values with an initial version of zero. */
     private static Product product(String id, String productGroupId, String variantName, String category,
                                    String categoryName, String name, String description, String price, int stock) {
         return new Product(id, productGroupId, variantName, category, categoryName, name, description,

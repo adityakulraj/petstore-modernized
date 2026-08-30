@@ -33,6 +33,7 @@ class MongoAdminOrderStore implements AdminOrderStore {
     private final PaymentStore payments;
     private final Clock clock = Clock.systemUTC();
 
+    /** Creates a mongo admin order store and wires its required collaborators. */
     MongoAdminOrderStore(MongoOrderRepository orders, MongoTemplate template,
                          @Qualifier("mongoTransactionManager") PlatformTransactionManager transactionManager,
                          DatabaseExecutor database, CustomerNotificationStore notifications, PaymentStore payments) {
@@ -45,17 +46,20 @@ class MongoAdminOrderStore implements AdminOrderStore {
     }
 
     @Override
+    /** Executes the orders persistence operation against the selected database. */
     public List<Order> orders() {
         return database.execute("admin.orders.all", true, () -> orders.findAllByOrderByCreatedAtDesc().stream()
                 .map(OrderDocument::toDomain).toList());
     }
 
     @Override
+    /** Executes the review persistence operation against the selected database. */
     public Order review(String orderId, long expectedVersion, Decision decision, String reviewer) {
         return database.execute(decision == Decision.APPROVED ? "admin.order.approve" : "admin.order.deny", true,
                 () -> transactions.execute(ignored -> reviewOnce(orderId, expectedVersion, decision, reviewer)));
     }
 
+    /** Executes the review once persistence operation against the selected database. */
     private Order reviewOnce(String orderId, long expectedVersion, Decision decision, String reviewer) {
         var current = orders.findById(orderId)
                 .orElseThrow(() -> new NotFoundException("Unknown order " + orderId));
@@ -107,6 +111,7 @@ class MongoAdminOrderStore implements AdminOrderStore {
         return reviewed;
     }
 
+    /** Executes the enqueue decision persistence operation against the selected database. */
     private void enqueueDecision(Order order, Decision decision) {
         var type = decision == Decision.APPROVED
                 ? CustomerNotification.Type.ORDER_APPROVED : CustomerNotification.Type.ORDER_DENIED;
@@ -114,6 +119,7 @@ class MongoAdminOrderStore implements AdminOrderStore {
         notifications.enqueue(order, type, decision == Decision.DENIED ? occurredAt.plusMillis(1) : occurredAt);
     }
 
+    /** Executes the compatible persistence operation against the selected database. */
     private static boolean compatible(String status, Decision decision) {
         return decision == Decision.APPROVED
                 ? Order.APPROVED.equals(status) || Order.COMPLETED.equals(status)

@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (error) { toast(error.message, true); }
 });
 
+/** Calls an application API and attaches CSRF credentials to protected mutations. */
 async function api(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   const response = await fetch(path, { credentials: 'same-origin', ...options, headers });
@@ -26,6 +27,7 @@ async function api(path, options = {}) {
   return response.json();
 }
 
+/** Loads analytics from the API and refreshes the corresponding client state. */
 async function loadAnalytics() {
   const form = document.querySelector('#analytics-filters');
   const button = form.querySelector('[type="submit"]');
@@ -40,6 +42,7 @@ async function loadAnalytics() {
   finally { button.disabled = false; }
 }
 
+/** Rebuilds the category filter while preserving the administrator's current selection. */
 function populateCategories(categories) {
   const select = document.querySelector('#category-filter');
   const selected = select.value;
@@ -47,6 +50,7 @@ function populateCategories(categories) {
   select.value = selected;
 }
 
+/** Renders summary cards, trends, status mix, and drill-down rows from the analytics report. */
 function render(report) {
   document.querySelector('#analytics-scope').textContent = `${report.from} through ${report.to} (UTC) · ${report.categoryId || 'all categories'} · generated ${new Date(report.generatedAt).toLocaleTimeString()}`;
   document.querySelector('#revenue-total').textContent = money(report.summary.revenue);
@@ -59,6 +63,7 @@ function render(report) {
   renderBreakdown(report);
 }
 
+/** Renders trend from the current client-side state. */
 function renderTrend(points) {
   const svg = document.querySelector('#revenue-trend');
   const width = 760, height = 280, left = 56, right = 18, top = 28, bottom = 40;
@@ -77,10 +82,12 @@ function renderTrend(points) {
   document.querySelector('#trend-peak').textContent = peak && Number(peak.revenue) > 0 ? `Peak ${money(peak.revenue)} on ${peak.date}` : 'No recognized revenue';
 }
 
+/** Renders statuses from the current client-side state. */
 function renderStatuses(statuses) {
   document.querySelector('#status-list').innerHTML = statuses.map(item => `<div class="status-row"><span class="status-swatch" style="background:${STATUS_COLORS[item.status] || '#617068'}"></span><div><strong>${escapeHtml(item.status.replaceAll('_',' '))}</strong><small>${money(item.value)}</small></div><span class="status-count">${number(item.orderCount)}</span></div>`).join('') || '<p class="empty-row">No orders in this period.</p>';
 }
 
+/** Renders breakdown from the current client-side state. */
 function renderBreakdown(report) {
   const itemMode = report.dimension === 'ITEM';
   document.querySelector('#breakdown-kicker').textContent = itemMode ? 'ITEM PERFORMANCE' : 'CATEGORY PERFORMANCE';
@@ -94,6 +101,7 @@ function renderBreakdown(report) {
   document.querySelector('#breakdown-body').innerHTML = report.breakdown.map(item => `<tr><td><strong>${escapeHtml(item.label)}</strong><br><small>${escapeHtml(item.key)}</small></td><td>${number(item.orderCount)}</td><td>${number(item.unitsSold)}</td><td>${money(item.revenue)}</td></tr>`).join('') || '<tr><td class="empty-row" colspan="4">No recognized sales in this period.</td></tr>';
 }
 
+/** Initializes the report to a useful recent date range. */
 function setDefaultDates() {
   const today = new Date();
   const from = new Date(today); from.setDate(from.getDate() - 29);
@@ -101,15 +109,22 @@ function setDefaultDates() {
   document.querySelector('#to-date').value = localDate(today);
 }
 
+/** Performs CSRF-protected logout and returns to the storefront. */
 async function signOut() {
   if (!state.csrf) state.csrf = await fetch('/api/v1/csrf', { credentials: 'same-origin' }).then(response => response.json());
   await fetch('/logout', { method: 'POST', credentials: 'same-origin', headers: { [state.csrf.headerName]: state.csrf.token } });
   location.href = '/';
 }
 
+/** Formats a date as a local ISO calendar value without a timezone shift. */
 function localDate(date) { return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; }
+/** Formats a numeric amount as a US-dollar price. */
 function money(value) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(value)); }
+/** Formats large monetary chart values in compact US-dollar notation. */
 function compactMoney(value) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 1 }).format(value); }
+/** Formats a count using locale-aware digit grouping. */
 function number(value) { return new Intl.NumberFormat('en-US').format(Number(value)); }
+/** Displays a transient success or error message to the user. */
 function toast(message, error = false) { const element = document.querySelector('#toast'); element.textContent = message; element.className = error ? 'show error' : 'show'; setTimeout(() => element.className = '', 4000); }
+/** Escapes untrusted text before it is inserted into generated HTML. */
 function escapeHtml(value) { const span = document.createElement('span'); span.textContent = String(value); return span.innerHTML; }

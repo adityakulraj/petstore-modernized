@@ -19,10 +19,12 @@ public class NotificationDeliveryService {
     private final Clock clock;
 
     @Autowired
+    /** Creates a notification delivery service and wires its required collaborators. */
     public NotificationDeliveryService(CustomerNotificationStore store, NotificationDeliveryGateway gateway) {
         this(store, gateway, Clock.systemUTC());
     }
 
+    /** Creates a notification delivery service and wires its required collaborators. */
     NotificationDeliveryService(CustomerNotificationStore store, NotificationDeliveryGateway gateway, Clock clock) {
         this.store = store;
         this.gateway = gateway;
@@ -30,6 +32,7 @@ public class NotificationDeliveryService {
     }
 
     @Scheduled(fixedDelayString = "${app.notifications.poll-interval:1s}")
+    /** Coordinates the deliver ready application use case. */
     public void deliverReady() {
         Instant now = Instant.now(clock);
         for (var notification : store.readyForDelivery(now, 50)) {
@@ -52,11 +55,13 @@ public class NotificationDeliveryService {
         }
     }
 
+    /** Coordinates the backoff application use case. */
     static Duration backoff(int attempts) {
         long seconds = 1L << Math.min(Math.max(attempts - 1, 0), 9);
         return Duration.ofSeconds(Math.min(seconds, MAX_BACKOFF.toSeconds()));
     }
 
+    /** Coordinates the safe error application use case. */
     private static String safeError(RuntimeException failure) {
         String value = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
         return value.substring(0, Math.min(value.length(), 500));

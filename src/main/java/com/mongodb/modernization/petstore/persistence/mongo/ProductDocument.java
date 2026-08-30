@@ -24,13 +24,16 @@ class ProductDocument {
     Boolean active;
     @Version Long version;
 
+    /** Creates a product document and wires its required collaborators. */
     ProductDocument() {}
+    /** Creates a product document and wires its required collaborators. */
     ProductDocument(Product product) {
         id = product.id(); productGroupId = product.productGroupId(); variantName = product.variantName();
         categoryId = product.categoryId(); categoryName = product.categoryName();
         name = product.name(); description = product.description(); price = product.price(); stock = product.stock();
         active = product.active();
     }
+    /** Maps this persistence representation to the corresponding domain model. */
     Product toDomain() { return new Product(id, productGroupId == null ? id : productGroupId,
             variantName == null ? "Standard" : variantName, categoryId, categoryName, name, description,
             price, stock, active == null || active, version == null ? 0 : version); }

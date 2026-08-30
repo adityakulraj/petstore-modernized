@@ -13,10 +13,13 @@ import java.util.Optional;
 class OracleCustomerAccountStore implements CustomerAccountStore {
     private final JpaCustomerAccountRepository accounts;
     private final DatabaseExecutor database;
+    /** Creates the Oracle customer-account adapter with its JPA repository. */
     OracleCustomerAccountStore(JpaCustomerAccountRepository accounts, DatabaseExecutor database) { this.accounts = accounts; this.database = database; }
+    /** Executes the account persistence operation against the selected database. */
     @Override public Optional<CustomerAccount> account(String username) {
         return database.execute("account.by_username", true, () -> accounts.findById(username).map(CustomerAccountJpaEntity::toDomain));
     }
+    /** Validates and persists . */
     @Override public CustomerAccount save(CustomerAccount account) {
         return database.execute("account.save", false, () -> accounts.save(new CustomerAccountJpaEntity(account)).toDomain());
     }

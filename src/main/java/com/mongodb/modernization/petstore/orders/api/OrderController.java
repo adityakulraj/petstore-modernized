@@ -26,13 +26,16 @@ import java.util.List;
 public class OrderController {
     private final StorefrontService storefront;
 
+    /** Creates the order controller with its storefront application service. */
     public OrderController(StorefrontService storefront) { this.storefront = storefront; }
 
     @GetMapping
+    /** Handles the orders HTTP request and returns its API response. */
     public List<Order> orders(Authentication authentication) { return storefront.orders(authentication.getName()); }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
+    /** Handles the checkout HTTP request and returns its API response. */
     public Order checkout(@RequestHeader("Idempotency-Key") @NotBlank @Size(max = 100) String idempotencyKey,
                           @Valid @RequestBody CheckoutRequest request, Authentication authentication) {
         return storefront.checkout(authentication.getName(), request.expectedCartVersion(), idempotencyKey,
@@ -40,6 +43,7 @@ public class OrderController {
     }
 
     @PostMapping("/{orderId}/cancel")
+    /** Handles the cancel HTTP request and returns its API response. */
     public Order cancel(@PathVariable String orderId,
                         @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 100) String idempotencyKey,
                         @Valid @RequestBody CustomerActionRequest request, Authentication authentication) {
@@ -48,6 +52,7 @@ public class OrderController {
     }
 
     @PostMapping("/{orderId}/refund")
+    /** Handles the refund HTTP request and returns its API response. */
     public Order refund(@PathVariable String orderId,
                         @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 100) String idempotencyKey,
                         @Valid @RequestBody CustomerActionRequest request, Authentication authentication) {
@@ -55,11 +60,14 @@ public class OrderController {
                 request.reason());
     }
 
+    /** Handles the checkout request HTTP request and returns its API response. */
     public record CheckoutRequest(@Min(0) long expectedCartVersion, @NotNull @Valid AddressRequest address,
                                   @Size(max = 100) String paymentToken) {}
+    /** Handles the customer action request HTTP request and returns its API response. */
     public record CustomerActionRequest(@Min(0) long expectedVersion,
                                         @NotBlank @Size(max = 250) String reason) {}
 
+    /** Handles the address request HTTP request and returns its API response. */
     public record AddressRequest(@NotBlank @Size(max = 100) String fullName,
                                  @NotBlank @Size(max = 150) String line1,
                                  @Size(max = 150) String line2,
@@ -67,6 +75,7 @@ public class OrderController {
                                  @NotBlank @Size(max = 80) String state,
                                  @NotBlank @Size(max = 20) String postalCode,
                                  @NotBlank @Size(max = 80) String country) {
+        /** Maps this persistence representation to the corresponding domain model. */
         Address toDomain() { return new Address(fullName, line1, line2, city, state, postalCode, country); }
     }
 }

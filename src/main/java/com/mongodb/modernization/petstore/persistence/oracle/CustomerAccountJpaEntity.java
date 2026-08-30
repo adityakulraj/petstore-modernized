@@ -21,14 +21,18 @@ class CustomerAccountJpaEntity {
     @Column(nullable = false) boolean myListPreference;
     @Column(nullable = false) boolean bannerPreference;
 
+    /** Creates a customer account jpa entity and wires its required collaborators. */
     protected CustomerAccountJpaEntity() {}
+    /** Creates a customer account jpa entity and wires its required collaborators. */
     CustomerAccountJpaEntity(CustomerAccount account) { replaceWith(account); }
+    /** Copies the supplied domain state into this mutable persistence representation. */
     void replaceWith(CustomerAccount account) {
         username = account.username(); passwordHash = account.passwordHash(); fullName = account.fullName();
         email = account.email(); phone = account.phone(); defaultAddress = new AddressJpa(account.defaultAddress());
         preferredLanguage = account.preferredLanguage(); favoriteCategory = account.favoriteCategory();
         myListPreference = account.myListPreference(); bannerPreference = account.bannerPreference();
     }
+    /** Maps this persistence representation to the corresponding domain model. */
     CustomerAccount toDomain() { return new CustomerAccount(username, passwordHash, fullName, email, phone,
             defaultAddress.toDomain(), preferredLanguage, favoriteCategory, myListPreference, bannerPreference); }
 }

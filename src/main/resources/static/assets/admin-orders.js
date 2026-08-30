@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (error) { toast(error.message, true); }
 });
 
+/** Calls an application API and attaches CSRF credentials to protected mutations. */
 async function api(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (options.method && options.method !== 'GET') {
@@ -26,6 +27,7 @@ async function api(path, options = {}) {
   return response.status === 204 ? null : response.json();
 }
 
+/** Loads orders from the API and refreshes the corresponding client state. */
 async function loadOrders() {
   state.orders = await api('/api/v1/admin/orders');
   for (const status of ['PENDING', 'APPROVED', 'DENIED', 'COMPLETED']) {
@@ -43,6 +45,7 @@ async function loadOrders() {
   document.querySelector('#history-body').innerHTML = history.map(order => `<tr><td><strong>${escapeHtml(order.id.slice(0, 8))}</strong><br><small>${new Date(order.createdAt).toLocaleString()}</small></td><td>${escapeHtml(order.customerId)}</td><td>${money(order.total)}</td><td><span class="status ${order.status.toLowerCase()}">${escapeHtml(order.status)}</span></td><td>${order.reviewedAt ? new Date(order.reviewedAt).toLocaleString() : 'Auto-approved'}</td><td>${escapeHtml(order.reviewedBy || 'Policy')}</td></tr>`).join('') || '<tr><td colspan="6">No processed orders yet.</td></tr>';
 }
 
+/** Submits an administrator approval decision using the displayed order version. */
 async function review(id, decision) {
   const order = state.orders.find(item => item.id === id);
   document.querySelectorAll(`[data-id="${CSS.escape(id)}"]`).forEach(button => button.disabled = true);
@@ -53,12 +56,16 @@ async function review(id, decision) {
   } catch (error) { toast(error.message, true); await loadOrders().catch(() => {}); }
 }
 
+/** Performs CSRF-protected logout and returns to the storefront. */
 async function signOut() {
   if (!state.csrf) state.csrf = await fetch('/api/v1/csrf', { credentials: 'same-origin' }).then(response => response.json());
   await fetch('/logout', { method: 'POST', credentials: 'same-origin', headers: { [state.csrf.headerName]: state.csrf.token } });
   location.href = '/';
 }
 
+/** Formats a numeric amount as a US-dollar price. */
 function money(value) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value); }
+/** Displays a transient success or error message to the user. */
 function toast(message, error = false) { const element = document.querySelector('#toast'); element.textContent = message; element.className = error ? 'show error' : 'show'; setTimeout(() => element.className = '', 4000); }
+/** Escapes untrusted text before it is inserted into generated HTML. */
 function escapeHtml(value) { const span = document.createElement('span'); span.textContent = String(value); return span.innerHTML; }

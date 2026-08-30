@@ -31,9 +31,12 @@ class PaymentDocument {
     Instant refundedAt;
     @Version Long version;
 
+    /** Creates a payment document and wires its required collaborators. */
     PaymentDocument() {}
+    /** Creates a payment document and wires its required collaborators. */
     PaymentDocument(Payment payment) { replaceWith(payment); }
 
+    /** Copies the supplied domain state into this mutable persistence representation. */
     void replaceWith(Payment payment) {
         id = payment.id(); orderId = payment.orderId(); customerId = payment.customerId();
         amount = payment.amount(); currency = payment.currency(); methodLabel = payment.methodLabel();
@@ -43,6 +46,7 @@ class PaymentDocument {
         voidedAt = payment.voidedAt(); refundedAt = payment.refundedAt();
     }
 
+    /** Maps this persistence representation to the corresponding domain model. */
     Payment toDomain() {
         return new Payment(id, orderId, customerId, amount, currency, methodLabel, status,
                 authorizationReference, captureReference, refundReference, createdAt, authorizedAt,

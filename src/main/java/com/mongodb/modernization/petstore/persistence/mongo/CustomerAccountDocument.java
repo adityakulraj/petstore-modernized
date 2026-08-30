@@ -12,13 +12,16 @@ class CustomerAccountDocument {
     String preferredLanguage; String favoriteCategory;
     boolean myListPreference; boolean bannerPreference;
 
+    /** Creates a customer account document and wires its required collaborators. */
     CustomerAccountDocument() {}
+    /** Creates a customer account document and wires its required collaborators. */
     CustomerAccountDocument(CustomerAccount account) {
         username = account.username(); passwordHash = account.passwordHash(); fullName = account.fullName(); email = account.email();
         phone = account.phone(); defaultAddress = new AddressDocument(account.defaultAddress());
         preferredLanguage = account.preferredLanguage(); favoriteCategory = account.favoriteCategory();
         myListPreference = account.myListPreference(); bannerPreference = account.bannerPreference();
     }
+    /** Maps this persistence representation to the corresponding domain model. */
     CustomerAccount toDomain() { return new CustomerAccount(username, passwordHash, fullName, email, phone,
             defaultAddress.toDomain(), preferredLanguage, favoriteCategory, myListPreference, bannerPreference); }
 }

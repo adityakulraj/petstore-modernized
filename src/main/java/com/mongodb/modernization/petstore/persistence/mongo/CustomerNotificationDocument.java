@@ -29,8 +29,10 @@ class CustomerNotificationDocument {
     Instant readAt;
     long version;
 
+    /** Creates a customer notification document and wires its required collaborators. */
     CustomerNotificationDocument() {}
 
+    /** Creates a customer notification document and wires its required collaborators. */
     CustomerNotificationDocument(CustomerNotification notification) {
         id = notification.id(); customerId = notification.customerId(); orderId = notification.orderId();
         type = notification.type(); title = notification.title(); message = notification.message();
@@ -40,6 +42,7 @@ class CustomerNotificationDocument {
         readAt = notification.readAt(); version = notification.version();
     }
 
+    /** Maps this persistence representation to the corresponding domain model. */
     CustomerNotification toDomain() {
         return new CustomerNotification(id, customerId, orderId, type, title, message, createdAt,
                 deliveryStatus, deliveryAttempts, nextAttemptAt, deliveredAt, lastError, readAt, version);

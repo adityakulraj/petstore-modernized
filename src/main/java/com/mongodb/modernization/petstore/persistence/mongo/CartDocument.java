@@ -15,12 +15,16 @@ class CartDocument {
     @Version Long version;
     ArrayList<CartLineDocument> lines = new ArrayList<>();
 
+    /** Creates a cart document and wires its required collaborators. */
     CartDocument() {}
+    /** Creates a cart document and wires its required collaborators. */
     CartDocument(String customerId) { this.id = customerId; this.customerId = customerId; }
+    /** Maps this persistence representation to the corresponding domain model. */
     Cart toDomain() {
         return new Cart(id, customerId, version == null ? 0 : version,
                 lines.stream().map(CartLineDocument::toDomain).toList());
     }
+    /** Copies the supplied domain state into this mutable persistence representation. */
     void replaceWith(Cart cart) {
         lines.clear(); cart.lines().stream().map(CartLineDocument::new).forEach(lines::add);
     }

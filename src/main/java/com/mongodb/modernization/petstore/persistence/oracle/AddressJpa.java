@@ -14,10 +14,13 @@ class AddressJpa {
     @Column(name = "SHIP_POSTAL_CODE", nullable = false, length = 20) String postalCode;
     @Column(name = "SHIP_COUNTRY", nullable = false, length = 80) String country;
 
+    /** Creates a address jpa and wires its required collaborators. */
     protected AddressJpa() {}
+    /** Creates a address jpa and wires its required collaborators. */
     AddressJpa(Address address) {
         fullName = address.fullName(); line1 = address.line1(); line2 = address.line2(); city = address.city();
         state = address.state(); postalCode = address.postalCode(); country = address.country();
     }
+    /** Maps this persistence representation to the corresponding domain model. */
     Address toDomain() { return new Address(fullName, line1, line2 == null ? "" : line2, city, state, postalCode, country); }
 }

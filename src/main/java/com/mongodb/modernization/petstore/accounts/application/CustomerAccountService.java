@@ -16,10 +16,12 @@ public class CustomerAccountService {
     private final CustomerAccountStore store;
     private final PasswordEncoder passwords;
 
+    /** Creates a customer account service and wires its required collaborators. */
     public CustomerAccountService(CustomerAccountStore store, PasswordEncoder passwords) {
         this.store = store; this.passwords = passwords;
     }
 
+    /** Coordinates the register application use case. */
     public CustomerAccount register(String username, String password, String fullName, String email, String phone,
                                     Address address, String language, String favoriteCategory,
                                     boolean myListPreference, boolean bannerPreference) {
@@ -33,10 +35,12 @@ public class CustomerAccountService {
         return account;
     }
 
+    /** Coordinates the account application use case. */
     public CustomerAccount account(String username) {
         return store.account(username).orElseThrow(() -> new NotFoundException("Customer account not found"));
     }
 
+    /** Coordinates the update application use case. */
     public CustomerAccount update(String username, String fullName, String email, String phone, Address address,
                                   String language, String favoriteCategory, boolean myListPreference,
                                   boolean bannerPreference) {

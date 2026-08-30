@@ -18,6 +18,7 @@ public record Payment(String id, String orderId, String customerId, BigDecimal a
 
     public enum Status { AUTHORIZED, CAPTURED, VOIDED, REFUNDED }
 
+    /** Validates the opaque demo token and creates an authorization without retaining card data. */
     public static Payment authorize(Order order, String token, Instant when) {
         String normalized = token == null || token.isBlank() ? APPROVED_DEMO_TOKEN : token.trim();
         if (DECLINED_DEMO_TOKEN.equals(normalized)) {
@@ -31,6 +32,7 @@ public record Payment(String id, String orderId, String customerId, BigDecimal a
                 null, null, when, when, null, null, null, 0);
     }
 
+    /** Idempotently captures an authorized payment after supplier fulfilment. */
     public Payment capture(Instant when) {
         if (status == Status.CAPTURED) return this;
         if (status != Status.AUTHORIZED) throw new StoreConflictException("Only an authorized payment can be captured");
@@ -39,6 +41,7 @@ public record Payment(String id, String orderId, String customerId, BigDecimal a
                 authorizedAt, when, voidedAt, refundedAt, version);
     }
 
+    /** Idempotently voids an uncaptured authorization when its order is cancelled. */
     public Payment voidAuthorization(Instant when) {
         if (status == Status.VOIDED) return this;
         if (status != Status.AUTHORIZED) throw new StoreConflictException("Only an authorized payment can be voided");
@@ -47,6 +50,7 @@ public record Payment(String id, String orderId, String customerId, BigDecimal a
                 authorizedAt, capturedAt, when, refundedAt, version);
     }
 
+    /** Idempotently refunds a captured payment for a completed order. */
     public Payment refund(Instant when) {
         if (status == Status.REFUNDED) return this;
         if (status != Status.CAPTURED) throw new StoreConflictException("Only a captured payment can be refunded");

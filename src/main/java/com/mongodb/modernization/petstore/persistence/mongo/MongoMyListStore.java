@@ -20,12 +20,14 @@ class MongoMyListStore implements MyListStore {
     private final MongoTemplate template;
     private final DatabaseExecutor database;
 
+    /** Creates a mongo my list store and wires its required collaborators. */
     MongoMyListStore(MongoTemplate template, DatabaseExecutor database) {
         this.template = template;
         this.database = database;
     }
 
     @Override
+    /** Executes the favorites persistence operation against the selected database. */
     public List<FavoriteItem> favorites(String customerId) {
         return database.execute("my_list.items.all", true, () -> template.find(
                         Query.query(Criteria.where("customerId").is(customerId))
@@ -34,6 +36,7 @@ class MongoMyListStore implements MyListStore {
     }
 
     @Override
+    /** Executes the add persistence operation against the selected database. */
     public void add(String customerId, String itemId, Instant addedAt) {
         database.execute("my_list.item.add", true, () -> template.upsert(
                 Query.query(Criteria.where("_id").is(id(customerId, itemId))), new Update()
@@ -42,12 +45,14 @@ class MongoMyListStore implements MyListStore {
     }
 
     @Override
+    /** Executes the remove persistence operation against the selected database. */
     public void remove(String customerId, String itemId) {
         database.execute("my_list.item.remove", true, () -> template.remove(
                 Query.query(new Criteria().andOperator(Criteria.where("_id").is(id(customerId, itemId)),
                         Criteria.where("customerId").is(customerId))), FavoriteItemDocument.class));
     }
 
+    /** Executes the id persistence operation against the selected database. */
     private static String id(String customerId, String itemId) {
         return customerId + ":" + itemId;
     }

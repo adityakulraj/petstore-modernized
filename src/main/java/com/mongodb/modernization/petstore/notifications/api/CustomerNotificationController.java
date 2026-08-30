@@ -19,16 +19,19 @@ import java.util.List;
 public class CustomerNotificationController {
     private final CustomerNotificationService notifications;
 
+    /** Creates a customer notification controller and wires its required collaborators. */
     public CustomerNotificationController(CustomerNotificationService notifications) {
         this.notifications = notifications;
     }
 
     @GetMapping
+    /** Handles the notifications HTTP request and returns its API response. */
     List<CustomerNotification> notifications(Authentication authentication) {
         return notifications.notifications(authentication.getName());
     }
 
     @PostMapping("/{notificationId}/read")
+    /** Handles the mark read HTTP request and returns its API response. */
     CustomerNotification markRead(Authentication authentication, @PathVariable String notificationId,
                                   @Valid @RequestBody MarkReadRequest request) {
         return notifications.markRead(authentication.getName(), notificationId, request.expectedVersion());

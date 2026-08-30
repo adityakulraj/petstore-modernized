@@ -14,21 +14,25 @@ import org.springframework.web.bind.annotation.RestController;
 public class MyListController {
     private final MyListService myList;
 
+    /** Creates a my list controller and wires its required collaborators. */
     public MyListController(MyListService myList) {
         this.myList = myList;
     }
 
     @GetMapping
+    /** Handles the my list HTTP request and returns its API response. */
     MyListService.MyListView myList(Authentication authentication) {
         return myList.myList(authentication.getName());
     }
 
     @PostMapping("/items/{itemId}")
+    /** Handles the add HTTP request and returns its API response. */
     MyListService.MyListView add(Authentication authentication, @PathVariable String itemId) {
         return myList.add(authentication.getName(), itemId);
     }
 
     @DeleteMapping("/items/{itemId}")
+    /** Handles the remove HTTP request and returns its API response. */
     MyListService.MyListView remove(Authentication authentication, @PathVariable String itemId) {
         return myList.remove(authentication.getName(), itemId);
     }

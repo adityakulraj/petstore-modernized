@@ -22,6 +22,7 @@ class OracleCustomerNotificationStore implements CustomerNotificationStore {
     private final TransactionTemplate transactions;
     private final DatabaseExecutor database;
 
+    /** Creates the Oracle notification-outbox adapter with its JPA repository and database executor. */
     OracleCustomerNotificationStore(JpaCustomerNotificationRepository notifications,
                                     PlatformTransactionManager transactionManager, DatabaseExecutor database) {
         this.notifications = notifications;
@@ -30,6 +31,7 @@ class OracleCustomerNotificationStore implements CustomerNotificationStore {
     }
 
     @Override
+    /** Executes the enqueue persistence operation against the selected database. */
     public CustomerNotification enqueue(Order order, CustomerNotification.Type type, Instant occurredAt) {
         // The enclosing business transaction owns retry of the complete state transition.
         return database.execute("notifications.enqueue", false, () -> {
@@ -40,6 +42,7 @@ class OracleCustomerNotificationStore implements CustomerNotificationStore {
     }
 
     @Override
+    /** Executes the notifications persistence operation against the selected database. */
     public List<CustomerNotification> notifications(String customerId) {
         return database.execute("notifications.by_customer", true,
                 () -> notifications.findByCustomerIdOrderByCreatedAtDesc(customerId).stream()
@@ -47,6 +50,7 @@ class OracleCustomerNotificationStore implements CustomerNotificationStore {
     }
 
     @Override
+    /** Executes the mark read persistence operation against the selected database. */
     public CustomerNotification markRead(String customerId, String notificationId, long expectedVersion, Instant readAt) {
         return database.execute("notifications.mark_read", true, () -> transactions.execute(ignored -> {
             var entity = notificationForCustomer(customerId, notificationId);
@@ -60,6 +64,7 @@ class OracleCustomerNotificationStore implements CustomerNotificationStore {
     }
 
     @Override
+    /** Executes the ready for delivery persistence operation against the selected database. */
     public List<CustomerNotification> readyForDelivery(Instant now, int limit) {
         return database.execute("notifications.delivery.ready", true,
                 () -> notifications.findByDeliveryStatusAndNextAttemptAtLessThanEqualOrderByCreatedAtAsc(
@@ -68,6 +73,7 @@ class OracleCustomerNotificationStore implements CustomerNotificationStore {
     }
 
     @Override
+    /** Executes the mark delivered persistence operation against the selected database. */
     public boolean markDelivered(String notificationId, long expectedVersion, Instant deliveredAt) {
         return database.execute("notifications.delivery.complete", true, () -> transactions.execute(ignored -> {
             var entity = notifications.findById(notificationId).orElse(null);
@@ -80,6 +86,7 @@ class OracleCustomerNotificationStore implements CustomerNotificationStore {
     }
 
     @Override
+    /** Executes the record delivery failure persistence operation against the selected database. */
     public boolean recordDeliveryFailure(String notificationId, long expectedVersion, int attempts,
                                          Instant nextAttemptAt, String error) {
         return database.execute("notifications.delivery.retry", true, () -> transactions.execute(ignored -> {
@@ -92,6 +99,7 @@ class OracleCustomerNotificationStore implements CustomerNotificationStore {
         }));
     }
 
+    /** Executes the notification for customer persistence operation against the selected database. */
     private CustomerNotificationJpaEntity notificationForCustomer(String customerId, String id) {
         var entity = notifications.findById(id).orElseThrow(() -> new NotFoundException("Unknown notification " + id));
         if (!entity.customerId.equals(customerId)) throw new NotFoundException("Unknown notification " + id);

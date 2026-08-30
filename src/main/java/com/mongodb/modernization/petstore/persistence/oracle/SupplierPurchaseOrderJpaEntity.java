@@ -35,8 +35,10 @@ class SupplierPurchaseOrderJpaEntity {
     @Version long version;
     @Column(name = "PROCESSED_AT") Instant processedAt;
 
+    /** Creates a supplier purchase order jpa entity and wires its required collaborators. */
     protected SupplierPurchaseOrderJpaEntity() {}
 
+    /** Creates a supplier purchase order jpa entity and wires its required collaborators. */
     SupplierPurchaseOrderJpaEntity(SupplierPurchaseOrder purchaseOrder) {
         id = purchaseOrder.id();
         orderId = purchaseOrder.orderId();
@@ -47,13 +49,16 @@ class SupplierPurchaseOrderJpaEntity {
         processedAt = purchaseOrder.processedAt();
     }
 
+    /** Provides the persistence mapping behavior for mark processed. */
     void markProcessed(Instant when) {
         status = SupplierPurchaseOrder.Status.PROCESSED;
         processedAt = when;
     }
 
+    /** Provides the persistence mapping behavior for cancel. */
     void cancel() { status = SupplierPurchaseOrder.Status.CANCELLED; }
 
+    /** Maps this persistence representation to the corresponding domain model. */
     SupplierPurchaseOrder toDomain() {
         return new SupplierPurchaseOrder(id, orderId, customerId, createdAt, status,
                 lines.stream().map(OrderLineJpa::toDomain).toList(), version, processedAt);

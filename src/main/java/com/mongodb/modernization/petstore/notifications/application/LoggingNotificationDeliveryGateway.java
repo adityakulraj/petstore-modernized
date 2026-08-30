@@ -10,6 +10,7 @@ class LoggingNotificationDeliveryGateway implements NotificationDeliveryGateway 
     private static final Logger LOG = LoggerFactory.getLogger(LoggingNotificationDeliveryGateway.class);
 
     @Override
+    /** Delivers to the local in-app channel and logs the deterministic notification idempotency key. */
     public void deliver(CustomerNotification notification) {
         // The deterministic notification id is also the idempotency key for a future e-mail provider adapter.
         LOG.atInfo()

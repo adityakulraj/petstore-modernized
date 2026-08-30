@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (isCustomer()) await Promise.all([loadCart(), loadNotifications(), loadMyList()]);
 });
 
+/** Calls an application API and attaches CSRF credentials to protected mutations. */
 async function api(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   const publicRegistration = path === '/api/v1/accounts' && options.method === 'POST' && !state.session?.authenticated;
@@ -28,6 +29,7 @@ async function api(path, options = {}) {
   return response.status === 204 ? null : response.json();
 }
 
+/** Loads catalog from the API and refreshes the corresponding client state. */
 async function loadCatalog() {
   state.products = await api('/api/v1/catalog/products');
   const categories = [...new Map(state.products.map(p => [p.categoryId, p.categoryName])).entries()];
@@ -37,6 +39,7 @@ async function loadCatalog() {
   if (categories.some(([id]) => id === selectedCategory)) categorySelect.value = selectedCategory;
   renderProducts();
 }
+/** Loads session from the API and refreshes the corresponding client state. */
 async function loadSession() {
   state.session = await api('/api/v1/session').catch(() => ({ authenticated: false }));
   const operations = state.session.admin ? ' · <a class="login-link" href="/admin/orders.html">Approvals</a> · <a class="login-link" href="/admin/sales.html">Sales</a> · <a class="login-link" href="/admin/health.html">Health</a>' : '';
@@ -47,14 +50,18 @@ async function loadSession() {
   document.querySelector('#open-account')?.addEventListener('click', () => show('account'));
   document.querySelector('#my-list-nav').classList.toggle('hidden', !isCustomer());
 }
+/** Reports whether the current session belongs to a storefront customer. */
 function isCustomer() { return state.session?.authenticated && !state.session.admin && !state.session.supplier; }
+/** Performs CSRF-protected logout and returns to the anonymous storefront. */
 async function signOut() {
   if (!state.csrf) state.csrf = await fetch('/api/v1/csrf').then(r => r.json());
   await fetch('/logout', { method: 'POST', credentials: 'same-origin', headers: { [state.csrf.headerName]: state.csrf.token } });
   location.href = '/';
 }
+/** Loads cart from the API and refreshes the corresponding client state. */
 async function loadCart() { state.cart = await api('/api/v1/cart'); renderCart(); }
 
+/** Renders products from the current client-side state. */
 function renderProducts() {
   const query = document.querySelector('#search').value.toLowerCase().trim();
   const category = document.querySelector('#category').value;
@@ -83,12 +90,14 @@ function renderProducts() {
   document.querySelectorAll('[data-favorite-group]').forEach(button => button.addEventListener('click', () => toggleFavorite(state.variantSelections[button.dataset.favoriteGroup])));
 }
 
+/** Loads my list from the API and refreshes the corresponding client state. */
 async function loadMyList() {
   if (!isCustomer()) return;
   state.myList = await api('/api/v1/my-list');
   document.querySelector('#favorite-count').textContent = state.myList.favorites.length;
   renderMyList(); renderProducts();
 }
+/** Toggles favorite and reconciles the client with server state. */
 async function toggleFavorite(itemId) {
   if (!isCustomer()) { location.href = '/login'; return; }
   const favorite = state.myList?.favorites.some(item => item.id === itemId);
@@ -98,6 +107,7 @@ async function toggleFavorite(itemId) {
     renderMyList(); renderProducts(); toast(favorite ? 'Removed from MyList.' : 'Saved to MyList.');
   } catch (error) { toast(error.message, true); await loadMyList().catch(() => {}); }
 }
+/** Renders my list from the current client-side state. */
 function renderMyList() {
   const panel = document.querySelector('#my-list-panel');
   if (!state.myList) { panel.innerHTML = '<p class="empty">Sign in to build your personal list.</p>'; return; }
@@ -110,6 +120,7 @@ function renderMyList() {
   panel.querySelectorAll('[data-list-add]').forEach(button => button.addEventListener('click', () => addToCart(button.dataset.listAdd)));
   panel.querySelectorAll('[data-list-favorite]').forEach(button => button.addEventListener('click', () => toggleFavorite(button.dataset.listFavorite)));
 }
+/** Builds reusable MyList and recommendation cards for a product collection. */
 function itemCards(products, saved) {
   return `<div class="recommendation-grid">${products.map(product => `<article class="recommendation-card">
     <span class="recommendation-icon" aria-hidden="true">${petIcons[product.categoryId] || '🐾'}</span><div>
@@ -118,7 +129,9 @@ function itemCards(products, saved) {
     <button class="favorite-button ${saved ? 'selected' : ''}" data-list-favorite="${escapeHtml(product.id)}" aria-label="${saved ? 'Remove from' : 'Add to'} MyList">${saved ? '♥' : '♡'}</button>
     <button class="add-button" data-list-add="${escapeHtml(product.id)}">${product.stock < 1 ? 'Backorder' : 'Add to cart'}</button></div></article>`).join('')}</div>`;
 }
+/** Adds a non-standard variant prefix to the base catalog name. */
 function productDisplayName(product) { return !product.variantName || product.variantName === 'Standard' ? product.name : `${product.variantName} ${product.name}`; }
+/** Groups independently stocked item variants under their shared product identifier. */
 function groupProducts(products) {
   return products.reduce((groups, product) => {
     if (!groups.has(product.productGroupId)) groups.set(product.productGroupId, []);
@@ -127,6 +140,7 @@ function groupProducts(products) {
   }, new Map());
 }
 
+/** Adds to cart through the API and refreshes the view. */
 async function addToCart(productId) {
   if (!state.session?.authenticated) { location.href = '/login'; return; }
   try {
@@ -135,6 +149,7 @@ async function addToCart(productId) {
     renderCart(); toast('Added to your cart.');
   } catch (error) { await recoverCart(error); }
 }
+/** Renders cart from the current client-side state. */
 function renderCart() {
   const panel = document.querySelector('#cart-panel');
   if (!state.cart || !state.cart.lines.length) { panel.innerHTML = '<p class="empty">Your cart is ready for a new companion.</p>'; document.querySelector('#cart-count').textContent = '0'; return; }
@@ -147,16 +162,20 @@ function renderCart() {
   document.querySelectorAll('[data-remove]').forEach(button => button.addEventListener('click', () => removeItem(button.dataset.remove)));
   document.querySelector('#checkout').addEventListener('click', () => document.querySelector('#checkout-dialog').showModal());
 }
+/** Updates quantity and refreshes the displayed state. */
 async function updateQuantity(productId, quantity) {
   try { state.cart = await api(`/api/v1/cart/items/${encodeURIComponent(productId)}`, { method:'PUT', body:JSON.stringify({quantity, expectedVersion:state.cart.version}) }); renderCart(); }
   catch (error) { await recoverCart(error); }
 }
+/** Removes item through the API and refreshes the view. */
 async function removeItem(productId) {
   try { state.cart = await api(`/api/v1/cart/items/${encodeURIComponent(productId)}?expectedVersion=${state.cart.version}`, { method:'DELETE' }); renderCart(); }
   catch (error) { await recoverCart(error); }
 }
+/** Reports a cart conflict and refreshes client state from the server. */
 async function recoverCart(error) { toast(error.message, true); if (state.session?.authenticated) await loadCart().catch(() => {}); }
 
+/** Submits one idempotent checkout request and reconciles catalog, cart, orders, and notifications. */
 async function checkout(event) {
   event.preventDefault();
   const fields = Object.fromEntries(new FormData(event.currentTarget));
@@ -175,6 +194,7 @@ async function checkout(event) {
     document.querySelector('#checkout-dialog').close(); toast(message); await Promise.all([loadCatalog(), loadCart(), loadOrders()]); show('orders');
   } catch (error) { await recoverCart(error); } finally { submit.disabled = false; }
 }
+/** Loads orders from the API and refreshes the corresponding client state. */
 async function loadOrders() {
   if (!state.session?.authenticated) return;
   const [orders, payments] = await Promise.all([api('/api/v1/orders'), api('/api/v1/payments'), loadNotifications()]);
@@ -192,6 +212,7 @@ async function loadOrders() {
   }).join('') || '<p class="empty">No orders yet.</p>';
   document.querySelectorAll('[data-order-action]').forEach(button => button.addEventListener('click', () => customerOrderAction(button)));
 }
+/** Confirms and submits an idempotent customer cancellation or refund request. */
 async function customerOrderAction(button) {
   const action = button.dataset.orderAction;
   const verb = action === 'cancel' ? 'cancel this order and void its authorization' : 'refund this completed order';
@@ -208,6 +229,7 @@ async function customerOrderAction(button) {
   } catch (error) { toast(error.message, true); await loadOrders().catch(() => {}); }
   finally { button.disabled = false; }
 }
+/** Loads notifications from the API and refreshes the corresponding client state. */
 async function loadNotifications() {
   if (!state.session?.authenticated || state.session.admin || state.session.supplier) return [];
   state.notifications = await api('/api/v1/notifications');
@@ -215,6 +237,7 @@ async function loadNotifications() {
   renderNotifications();
   return state.notifications;
 }
+/** Renders notifications from the current client-side state. */
 function renderNotifications() {
   const panel = document.querySelector('#notifications-panel');
   panel.innerHTML = state.notifications.map(item => `<article class="notification-card ${item.readAt ? '' : 'unread'}">
@@ -225,11 +248,13 @@ function renderNotifications() {
   </article>`).join('') || '<p class="empty">No order updates yet.</p>';
   document.querySelectorAll('[data-read]').forEach(button => button.addEventListener('click', () => markRead(button)));
 }
+/** Builds the ordered notification timeline for one customer order. */
 function renderTimeline(orderId) {
   const events = state.notifications.filter(item => item.orderId === orderId).sort((a,b) => new Date(a.createdAt) - new Date(b.createdAt));
   if (!events.length) return '';
   return `<ol class="order-timeline">${events.map(item => `<li class="complete"><span>${notificationIcon(item.type)}</span><div><strong>${escapeHtml(item.title)}</strong><small>${new Date(item.createdAt).toLocaleString()}</small></div></li>`).join('')}</ol>`;
 }
+/** Marks a notification read with optimistic-lock recovery after a stale-version conflict. */
 async function markRead(button) {
   const notificationId = button.dataset.read;
   button.disabled = true;
@@ -252,10 +277,12 @@ async function markRead(button) {
     toast(error.message, true);
   } finally { button.disabled = false; }
 }
+/** Maps a notification type to the icon shown in the customer timeline. */
 function notificationIcon(type) {
   return ({ORDER_BACKORDERED:'↻', ORDER_INVENTORY_ALLOCATED:'✓', ORDER_PENDING:'⏳', ORDER_APPROVED:'✓', ORDER_DENIED:'×', ORDER_COMPLETED:'📦',
     ORDER_CANCELLED:'×', ORDER_REFUNDED:'↩', PAYMENT_AUTHORIZED:'💳', PAYMENT_CAPTURED:'✓', PAYMENT_VOIDED:'⊘', PAYMENT_REFUNDED:'↩'})[type] || '•';
 }
+/** Loads account from the API and refreshes the corresponding client state. */
 async function loadAccount() {
   const form = document.querySelector('#account-form');
   const signedIn = state.session?.authenticated;
@@ -272,6 +299,7 @@ async function loadAccount() {
   form.elements.myListPreference.checked = account.myListPreference;
   form.elements.bannerPreference.checked = account.bannerPreference;
 }
+/** Validates and saves account through the API. */
 async function saveAccount(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -300,6 +328,7 @@ async function saveAccount(event) {
     toast('Account updated.'); await loadMyList();
   } catch (error) { toast(error.message, true); }
 }
+/** Switches the storefront to the requested view and loads any view-specific data. */
 async function show(view) {
   if ((view === 'cart' || view === 'orders' || view === 'notifications' || view === 'my-list') && !state.session?.authenticated) { location.href='/login'; return; }
   if (view === 'cart') await loadCart().catch(error => toast(error.message,true));
@@ -310,6 +339,9 @@ async function show(view) {
   document.querySelectorAll('.view').forEach(section => section.classList.toggle('hidden', section.id !== view));
   document.querySelector(`#${view}`)?.scrollIntoView({ behavior:'smooth', block:'start' });
 }
+/** Displays a transient success or error message to the user. */
 function toast(message, error=false) { const el=document.querySelector('#toast'); el.textContent=message; el.className=error?'show error':'show'; setTimeout(()=>el.className='',3500); }
+/** Formats a numeric amount as a US-dollar price. */
 function money(value) { return new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(value); }
+/** Escapes untrusted text before it is inserted into generated HTML. */
 function escapeHtml(value) { const span=document.createElement('span');span.textContent=String(value);return span.innerHTML; }

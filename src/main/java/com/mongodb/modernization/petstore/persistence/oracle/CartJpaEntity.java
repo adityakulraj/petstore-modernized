@@ -27,10 +27,14 @@ class CartJpaEntity {
     @OrderColumn(name = "LINE_NUMBER")
     List<CartLineJpa> lines = new ArrayList<>();
 
+    /** Creates a cart jpa entity and wires its required collaborators. */
     protected CartJpaEntity() {}
+    /** Creates a cart jpa entity and wires its required collaborators. */
     CartJpaEntity(String customerId) { this.customerId = customerId; }
 
+    /** Maps this persistence representation to the corresponding domain model. */
     Cart toDomain() { return new Cart(customerId, customerId, version, lines.stream().map(CartLineJpa::toDomain).toList()); }
+    /** Copies the supplied domain state into this mutable persistence representation. */
     void replaceWith(Cart cart) {
         lines.clear();
         cart.lines().stream().map(CartLineJpa::new).forEach(lines::add);

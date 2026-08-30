@@ -31,13 +31,16 @@ import java.util.List;
 public class AdminCatalogController {
     private final CatalogService catalog;
 
+    /** Creates a admin catalog controller and wires its required collaborators. */
     public AdminCatalogController(CatalogService catalog) { this.catalog = catalog; }
 
     @GetMapping("/items")
+    /** Handles the items HTTP request and returns its API response. */
     public List<Product> items() { return catalog.products(); }
 
     @PostMapping("/items")
     @ResponseStatus(HttpStatus.CREATED)
+    /** Creates . */
     public Product create(@Valid @RequestBody CreateItem request, Principal principal) {
         return catalog.create(request.id(), request.productGroupId(), request.variantName(), request.categoryId(),
                 request.categoryName(), request.name(), request.description(), request.price(), request.active(),
@@ -45,6 +48,7 @@ public class AdminCatalogController {
     }
 
     @PutMapping("/items/{id}")
+    /** Handles the update HTTP request and returns its API response. */
     public Product update(@PathVariable String id, @Valid @RequestBody UpdateItem request, Principal principal) {
         return catalog.update(id, request.expectedVersion(), request.productGroupId(), request.variantName(),
                 request.categoryId(), request.categoryName(), request.name(), request.description(), request.price(),
@@ -52,8 +56,10 @@ public class AdminCatalogController {
     }
 
     @GetMapping("/changes")
+    /** Handles the changes HTTP request and returns its API response. */
     public List<CatalogChange> changes() { return catalog.changes(); }
 
+    /** Handles the create item HTTP request and returns its API response. */
     public record CreateItem(
             @NotBlank @Pattern(regexp = "[A-Za-z0-9][A-Za-z0-9-]{2,39}") String id,
             @NotBlank @Pattern(regexp = "[A-Za-z0-9][A-Za-z0-9-]{1,39}") String productGroupId,
@@ -65,6 +71,7 @@ public class AdminCatalogController {
             @NotNull @DecimalMin("0.01") @DecimalMax("999999.99") @Digits(integer = 6, fraction = 2) BigDecimal price,
             boolean active) {}
 
+    /** Handles the update item HTTP request and returns its API response. */
     public record UpdateItem(
             @Min(0) long expectedVersion,
             @NotBlank @Pattern(regexp = "[A-Za-z0-9][A-Za-z0-9-]{1,39}") String productGroupId,

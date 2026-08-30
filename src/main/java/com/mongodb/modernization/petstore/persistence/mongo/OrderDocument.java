@@ -31,13 +31,16 @@ class OrderDocument {
     Instant reviewedAt;
     String reviewedBy;
 
+    /** Creates an empty MongoDB order representation for object mapping. */
     OrderDocument() {}
+    /** Creates a MongoDB order representation from a domain snapshot. */
     OrderDocument(Order order) {
         id = order.id(); customerId = order.customerId(); idempotencyKey = order.idempotencyKey();
         createdAt = order.createdAt(); status = order.status(); shippingAddress = new AddressDocument(order.shippingAddress());
         order.lines().stream().map(OrderLineDocument::new).forEach(lines::add); total = order.total();
         version = order.version(); reviewedAt = order.reviewedAt(); reviewedBy = order.reviewedBy();
     }
+    /** Maps this persistence representation to the corresponding domain model. */
     Order toDomain() {
         return new Order(id, customerId, idempotencyKey, createdAt, status, shippingAddress.toDomain(),
                 lines.stream().map(OrderLineDocument::toDomain).toList(), total,

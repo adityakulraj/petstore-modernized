@@ -15,12 +15,14 @@ class OracleSalesAnalyticsSource implements SalesAnalyticsSource {
     private final JpaOrderRepository orders;
     private final DatabaseExecutor database;
 
+    /** Creates the Oracle analytics source backed by the order repository and database executor. */
     OracleSalesAnalyticsSource(JpaOrderRepository orders, DatabaseExecutor database) {
         this.orders = orders;
         this.database = database;
     }
 
     @Override
+    /** Executes the orders between persistence operation against the selected database. */
     public List<Order> ordersBetween(Instant fromInclusive, Instant toExclusive) {
         return database.execute("admin.analytics.sales", true, () -> orders
                 .findByCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByCreatedAtAsc(fromInclusive, toExclusive)

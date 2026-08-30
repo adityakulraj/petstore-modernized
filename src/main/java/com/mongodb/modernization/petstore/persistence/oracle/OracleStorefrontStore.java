@@ -45,6 +45,7 @@ class OracleStorefrontStore implements StorefrontStore {
     private final BigDecimal approvalThreshold;
     private final Clock clock = Clock.systemUTC();
 
+    /** Creates the Oracle storefront adapter with JPA repositories and the shared database executor. */
     OracleStorefrontStore(JpaProductRepository products, JpaCartRepository carts, JpaOrderRepository orders,
                           PlatformTransactionManager transactionManager, DatabaseExecutor database,
                           AppProperties properties, CustomerNotificationStore notifications, PaymentStore payments) {
@@ -57,6 +58,7 @@ class OracleStorefrontStore implements StorefrontStore {
     }
 
     @Override
+    /** Queries active products, pushes category filtering into Oracle, and returns stable ID ordering. */
     public List<Product> products(String categoryId) {
         boolean filtered = categoryId != null && !categoryId.isBlank();
         return database.execute(filtered ? "catalog.products.by_category" : "catalog.products.all", true,
@@ -67,18 +69,21 @@ class OracleStorefrontStore implements StorefrontStore {
     }
 
     @Override
+    /** Finds one active product by SKU and hides archived catalog entries. */
     public Optional<Product> product(String productId) {
         return database.execute("catalog.product.by_id", true,
                 () -> products.findById(productId).map(ProductJpaEntity::toDomain).filter(Product::active));
     }
 
     @Override
+    /** Loads or race-safely creates the customer's versioned cart. */
     public Cart cart(String customerId) {
         return database.execute("cart.by_customer", true, () -> transactions.execute(ignored ->
                 carts.findById(customerId).orElseGet(() -> carts.saveAndFlush(new CartJpaEntity(customerId))).toDomain()));
     }
 
     @Override @Transactional
+    /** Adds a product to a cart inside an Oracle transaction using optimistic locking. */
     public Cart addToCart(String customerId, long expectedVersion, String productId, int quantity) {
         return database.execute("cart.add", false, () -> {
             var product = products.findById(productId).map(ProductJpaEntity::toDomain)
@@ -88,17 +93,20 @@ class OracleStorefrontStore implements StorefrontStore {
     }
 
     @Override @Transactional
+    /** Replaces an existing cart-line quantity using the caller's expected version. */
     public Cart updateCart(String customerId, long expectedVersion, String productId, int quantity) {
         return database.execute("cart.update", false,
                 () -> mutateCart(customerId, expectedVersion, cart -> cart.update(productId, quantity)));
     }
 
     @Override @Transactional
+    /** Removes a cart line using the caller's expected version. */
     public Cart removeFromCart(String customerId, long expectedVersion, String productId) {
         return database.execute("cart.remove", false,
                 () -> mutateCart(customerId, expectedVersion, cart -> cart.remove(productId)));
     }
 
+    /** Applies one cart transformation and converts concurrent flushes into an HTTP-level conflict. */
     private Cart mutateCart(String customerId, long expectedVersion, UnaryOperator<Cart> mutation) {
         try {
             var entity = carts.findById(customerId).orElseGet(() -> new CartJpaEntity(customerId));
@@ -112,17 +120,20 @@ class OracleStorefrontStore implements StorefrontStore {
     }
 
     @Override
+    /** Delegates legacy-compatible checkout to the approved opaque demo-payment token. */
     public Order checkout(String customerId, long expectedCartVersion, String key, Address address) {
         return checkout(customerId, expectedCartVersion, key, address,
                 com.mongodb.modernization.petstore.payments.domain.Payment.APPROVED_DEMO_TOKEN);
     }
 
     @Override
+    /** Runs replay-safe checkout in one Oracle transaction with bounded transient retries. */
     public Order checkout(String customerId, long expectedCartVersion, String key, Address address, String paymentToken) {
         return database.execute("orders.checkout", true,
                 () -> transactions.execute(ignored -> checkoutOnce(customerId, expectedCartVersion, key, address, paymentToken)));
     }
 
+    /** Executes one atomic checkout attempt, including inventory, order, payment, notification, and cart changes. */
     private Order checkoutOnce(String customerId, long expectedCartVersion, String key, Address address, String paymentToken) {
         // Serialize checkouts for one customer's cart, then re-check the idempotency key while
         // holding the row lock. A simultaneous retry waits for the winner and returns its order.
@@ -175,6 +186,7 @@ class OracleStorefrontStore implements StorefrontStore {
         }
     }
 
+    /** Enqueues the notification that corresponds to the order state produced by checkout. */
     private void enqueueCheckoutNotification(Order order) {
         var type = switch (order.status()) {
             case Order.BACKORDERED -> CustomerNotification.Type.ORDER_BACKORDERED;
@@ -185,18 +197,21 @@ class OracleStorefrontStore implements StorefrontStore {
     }
 
     @Override
+    /** Finds the committed checkout result for a customer-owned idempotency key. */
     public Optional<Order> orderByIdempotencyKey(String customerId, String key) {
         return database.execute("orders.by_idempotency", true,
                 () -> orders.findByCustomerIdAndIdempotencyKey(customerId, key).map(OrderJpaEntity::toDomain));
     }
 
     @Override
+    /** Returns a customer's orders in reverse creation order. */
     public List<Order> orders(String customerId) {
         return database.execute("orders.by_customer", true, () -> orders
                 .findByCustomerIdOrderByCreatedAtDesc(customerId).stream().map(OrderJpaEntity::toDomain).toList());
     }
 
     @Override @Transactional
+    /** Seeds the initial catalog without overwriting existing product data. */
     public void seedIfEmpty() {
         database.execute("catalog.seed", false, () -> {
             for (var product : SeedProducts.all()) {
@@ -212,6 +227,7 @@ class OracleStorefrontStore implements StorefrontStore {
         });
     }
 
+    /** Rejects stale writes by comparing the expected and current optimistic-lock versions. */
     private static void requireVersion(long actual, long expected) {
         if (actual != expected) throw new StoreConflictException("Expected cart version " + expected + " but found " + actual);
     }

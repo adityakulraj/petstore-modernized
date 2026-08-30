@@ -4,6 +4,7 @@ import com.mongodb.modernization.petstore.orders.domain.Order;
 
 import java.time.Instant;
 
+/** Durable customer-facing order event with delivery, retry, read, and optimistic-lock state. */
 public record CustomerNotification(String id, String customerId, String orderId, Type type,
                                    String title, String message, Instant createdAt,
                                    DeliveryStatus deliveryStatus, int deliveryAttempts,
@@ -14,6 +15,7 @@ public record CustomerNotification(String id, String customerId, String orderId,
         PAYMENT_REFUNDED }
     public enum DeliveryStatus { PENDING, DELIVERED }
 
+    /** Builds a deterministic notification ID and user-facing message for an order event. */
     public static CustomerNotification forOrder(Order order, Type type, Instant occurredAt) {
         String shortId = order.id().substring(0, Math.min(8, order.id().length()));
         String title;

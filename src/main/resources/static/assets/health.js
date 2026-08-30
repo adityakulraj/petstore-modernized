@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MILLIS);
 });
 
+/** Fetches the protected health snapshot and updates the dashboard or its error banner. */
 async function refresh() {
   try {
     const response = await fetch('/api/v1/admin/health', { credentials: 'same-origin', headers: { Accept: 'application/json' } });
@@ -21,6 +22,7 @@ async function refresh() {
   }
 }
 
+/** Renders application, traffic, JVM, pool, operation, and query-plan health data. */
 function render(data) {
   setStatus(data.status);
   text('#store-name', data.store.toUpperCase());
@@ -50,12 +52,14 @@ function render(data) {
   renderPlans(data.database.queryPlans);
 }
 
+/** Updates the status label and its visual availability indicator. */
 function setStatus(status) {
   text('#health-status', status);
   const dot = document.querySelector('#health-dot');
   dot.className = `status-dot ${status === 'UP' ? 'up' : status === 'Loading' ? 'pending' : 'down'}`;
 }
 
+/** Renders pool from the current client-side state. */
 function renderPool(pool) {
   text('#pool-provider', pool.provider);
   text('#pool-active', number(pool.active));
@@ -68,6 +72,7 @@ function renderPool(pool) {
   document.querySelector('#pool-used').style.width = `${usage}%`;
 }
 
+/** Renders jvm from the current client-side state. */
 function renderJvm(jvm) {
   text('#jvm-heap-used', bytes(jvm.heapUsedBytes));
   text('#jvm-heap-committed', bytes(jvm.heapCommittedBytes));
@@ -77,6 +82,7 @@ function renderJvm(jvm) {
   text('#jvm-processors', number(jvm.processors));
 }
 
+/** Renders operations from the current client-side state. */
 function renderOperations(operations) {
   const body = document.querySelector('#operation-rows');
   body.replaceChildren();
@@ -90,6 +96,7 @@ function renderOperations(operations) {
   ])));
 }
 
+/** Renders plans from the current client-side state. */
 function renderPlans(report) {
   text('#plan-captured', `Read-only explain diagnostics · captured ${new Date(report.capturedAt).toLocaleTimeString()} · cached 60s`);
   const body = document.querySelector('#plan-rows');
@@ -109,6 +116,7 @@ function renderPlans(report) {
   });
 }
 
+/** Renders bar chart from the current client-side state. */
 function renderBarChart(selector, points, value) {
   const svg = chartBase(selector, points, value, '');
   const { width, height, left, top, innerWidth, innerHeight, max } = svg.chart;
@@ -122,7 +130,9 @@ function renderBarChart(selector, points, value) {
   });
 }
 
+/** Renders line chart from the current client-side state. */
 function renderLineChart(selector, points, series, suffix) {
+  /** Selects the largest series value at a point so every line shares a safe chart scale. */
   const combined = point => Math.max(...series.map(item => item.value(point)));
   const svg = chartBase(selector, points, combined, suffix);
   const { left, top, innerWidth, innerHeight, max } = svg.chart;
@@ -136,6 +146,7 @@ function renderLineChart(selector, points, series, suffix) {
   });
 }
 
+/** Clears an SVG and creates shared axes, grid lines, labels, and scaling metadata. */
 function chartBase(selector, points, value, suffix) {
   const svg = document.querySelector(selector);
   svg.replaceChildren();
@@ -158,29 +169,39 @@ function chartBase(selector, points, value, suffix) {
   return svg;
 }
 
+/** Creates a safe table row using text nodes rather than HTML interpolation. */
 function row(values) {
   const tr = document.createElement('tr');
   values.forEach(value => { const td = document.createElement('td'); td.textContent = value; tr.append(td); });
   return tr;
 }
+/** Creates an SVG element and applies the supplied attributes. */
 function element(name, attributes) {
   const node = document.createElementNS(svgNs, name);
   Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, value));
   return node;
 }
+/** Writes text content into the element matching a selector. */
 function text(selector, value) { document.querySelector(selector).textContent = value; }
+/** Formats a count with locale-aware digit grouping. */
 function number(value) { return new Intl.NumberFormat().format(value || 0); }
+/** Rounds chart-axis values to a readable precision. */
 function round(value) { return value >= 100 ? Math.round(value) : Math.round(value * 10) / 10; }
+/** Formats a numeric ratio as a two-decimal percentage. */
 function percent(value) { return `${(value || 0).toFixed(2)}%`; }
+/** Formats latency with precision appropriate to its magnitude. */
 function milliseconds(value) { return `${(value || 0).toFixed(value >= 100 ? 0 : 1)} ms`; }
+/** Converts a byte count into the most readable binary unit. */
 function bytes(value) {
   if (value < 0) return 'unbounded';
   const units = ['B','KB','MB','GB']; let amount = value || 0, unit = 0;
   while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit++; }
   return `${amount.toFixed(unit > 1 ? 1 : 0)} ${units[unit]}`;
 }
+/** Converts uptime seconds into compact day, hour, and minute components. */
 function duration(seconds) {
   const days = Math.floor(seconds / 86400), hours = Math.floor(seconds % 86400 / 3600), minutes = Math.floor(seconds % 3600 / 60);
   return [days && `${days}d`, (hours || days) && `${hours}h`, `${minutes}m`].filter(Boolean).join(' ');
 }
+/** Rounds a chart maximum upward to a readable power-of-ten boundary. */
 function niceMaximum(value) { const power = 10 ** Math.floor(Math.log10(value)); return Math.ceil(value / power) * power; }

@@ -21,11 +21,13 @@ import org.springframework.http.HttpMethod;
 @Configuration
 public class SecurityConfig {
     @Bean
+    /** Provides the BCrypt encoder used to hash and verify local account passwords. */
     PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
 
     @Bean
+    /** Configures or applies users behavior for the application runtime. */
     UserDetailsService users(AppProperties properties, CustomerAccountStore accounts, PasswordEncoder encoder) {
         var admin = User.withUsername(properties.admin().username())
                 .password(encoder.encode(properties.admin().password()))
@@ -46,6 +48,7 @@ public class SecurityConfig {
         };
     }
 
+    /** Configures or applies authentication provider behavior for the application runtime. */
     DaoAuthenticationProvider authenticationProvider(UserDetailsService users, PasswordEncoder encoder) {
         var provider = new DaoAuthenticationProvider(users);
         provider.setPasswordEncoder(encoder);
@@ -54,6 +57,7 @@ public class SecurityConfig {
 
     @Bean
     @Order(1)
+    /** Configures or applies diagnostic security filter chain behavior for the application runtime. */
     SecurityFilterChain diagnosticSecurityFilterChain(HttpSecurity http, UserDetailsService users,
                                                       PasswordEncoder encoder) throws Exception {
         var sessionContexts = new HttpSessionSecurityContextRepository();
@@ -78,6 +82,7 @@ public class SecurityConfig {
 
     @Bean
     @Order(2)
+    /** Defines authentication, authorization, CSRF, login, and logout rules for HTTP requests. */
     SecurityFilterChain securityFilterChain(HttpSecurity http, UserDetailsService users, PasswordEncoder encoder) throws Exception {
         var sessionContexts = new HttpSessionSecurityContextRepository();
         return http

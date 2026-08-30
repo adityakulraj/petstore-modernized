@@ -23,9 +23,11 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
     private static final Pattern SAFE = Pattern.compile("[A-Za-z0-9._-]{1,64}");
     private final RequestTelemetry telemetry;
 
+    /** Creates a correlation id filter and wires its required collaborators. */
     public CorrelationIdFilter(RequestTelemetry telemetry) { this.telemetry = telemetry; }
 
     @Override
+    /** Configures or applies do filter internal behavior for the application runtime. */
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         // Prefer the conventional request header while retaining the challenge's original correlation header.

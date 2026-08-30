@@ -16,8 +16,10 @@ class SupplierInventoryCommandDocument {
     long resultVersion;
     Instant completedAt;
 
+    /** Creates a supplier inventory command document and wires its required collaborators. */
     SupplierInventoryCommandDocument() {}
 
+    /** Creates a supplier inventory command document and wires its required collaborators. */
     SupplierInventoryCommandDocument(String id, String productId, long expectedVersion, int quantity,
                                      int resultStock, long resultVersion, Instant completedAt) {
         this.id = id;
@@ -29,6 +31,7 @@ class SupplierInventoryCommandDocument {
         this.completedAt = completedAt;
     }
 
+    /** Provides the persistence mapping behavior for matches. */
     boolean matches(String productId, long expectedVersion, int quantity) {
         return this.productId.equals(productId) && this.expectedVersion == expectedVersion && this.quantity == quantity;
     }

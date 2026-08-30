@@ -10,5 +10,6 @@ import java.util.Optional;
 interface JpaCartRepository extends JpaRepository<CartJpaEntity, String> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select c from CartJpaEntity c where c.customerId = :customerId")
+    /** Queries persisted records by id for checkout. */
     Optional<CartJpaEntity> findByIdForCheckout(String customerId);
 }

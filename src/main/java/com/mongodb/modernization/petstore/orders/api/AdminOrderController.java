@@ -21,16 +21,20 @@ import java.util.List;
 public class AdminOrderController {
     private final AdminOrderService orders;
 
+    /** Creates a admin order controller and wires its required collaborators. */
     public AdminOrderController(AdminOrderService orders) { this.orders = orders; }
 
     @GetMapping
+    /** Handles the orders HTTP request and returns its API response. */
     public List<Order> orders() { return orders.orders(); }
 
     @PostMapping("/{orderId}/decision")
+    /** Handles the review HTTP request and returns its API response. */
     public Order review(@PathVariable String orderId, @Valid @RequestBody ReviewRequest request,
                         Authentication authentication) {
         return orders.review(orderId, request.expectedVersion(), request.decision(), authentication.getName());
     }
 
+    /** Handles the review request HTTP request and returns its API response. */
     public record ReviewRequest(@Min(0) long expectedVersion, @NotNull AdminOrderStore.Decision decision) {}
 }

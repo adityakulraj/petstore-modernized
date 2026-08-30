@@ -31,6 +31,7 @@ public class AdminLogController {
     private final ObjectMapper objectMapper;
     private final Path logFile;
 
+    /** Creates a admin log controller and wires its required collaborators. */
     public AdminLogController(ObjectMapper objectMapper,
                               @Value("${logging.file.name:logs/petstore.log}") String logFile) {
         this.objectMapper = objectMapper;
@@ -39,6 +40,7 @@ public class AdminLogController {
     }
 
     @GetMapping
+    /** Writes structured telemetry for s. */
     public LogSearchResponse logs(
             @RequestParam(required = false)
             @Pattern(regexp = "[A-Za-z0-9._-]{1,64}") String requestId,
@@ -61,6 +63,7 @@ public class AdminLogController {
         return new LogSearchResponse(requestId, matched[0], List.copyOf(recent));
     }
 
+    /** Handles the matches HTTP request and returns its API response. */
     private boolean matches(JsonNode entry, String requestId) {
         if (requestId == null) return true;
         var loggedRequestId = entry.get("requestId");
@@ -69,6 +72,7 @@ public class AdminLogController {
                 && requestId.equals(loggedRequestId.stringValue());
     }
 
+    /** Handles the parse HTTP request and returns its API response. */
     private java.util.Optional<JsonNode> parse(String line) {
         try {
             return java.util.Optional.of(objectMapper.readTree(line));
@@ -78,5 +82,6 @@ public class AdminLogController {
         }
     }
 
+    /** Handles the log search response HTTP request and returns its API response. */
     public record LogSearchResponse(String requestId, long matched, List<JsonNode> entries) {}
 }

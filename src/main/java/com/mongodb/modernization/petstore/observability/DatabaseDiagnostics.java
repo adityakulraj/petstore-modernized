@@ -4,7 +4,9 @@ import java.time.Instant;
 import java.util.List;
 
 public interface DatabaseDiagnostics {
+    /** Collects or updates observability data for pool. */
     PoolSnapshot pool();
+    /** Collects or updates observability data for query plans. */
     QueryPlanReport queryPlans();
 
     record PoolSnapshot(String provider, int configuredMin, int configuredMax, int total,

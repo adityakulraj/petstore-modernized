@@ -33,6 +33,7 @@ class OracleCustomerOrderActionStore implements CustomerOrderActionStore {
     private final CustomerNotificationStore notifications;
     private final Clock clock = Clock.systemUTC();
 
+    /** Creates the Oracle cancellation/refund adapter with JPA transaction dependencies. */
     OracleCustomerOrderActionStore(JpaOrderRepository orders, JpaCustomerOrderCommandRepository commands,
                                    JpaSupplierPurchaseOrderRepository purchaseOrders, JpaProductRepository products,
                                    PlatformTransactionManager manager, DatabaseExecutor database, PaymentStore payments,
@@ -42,14 +43,17 @@ class OracleCustomerOrderActionStore implements CustomerOrderActionStore {
         this.notifications = notifications;
     }
 
+    /** Executes an idempotent customer cancellation with version and ownership checks. */
     @Override public Order cancel(String customerId, String orderId, long version, String key, String reason) {
         return execute(customerId, orderId, version, key, reason.trim(), Action.CANCEL);
     }
 
+    /** Executes an idempotent customer refund with version and ownership checks. */
     @Override public Order refund(String customerId, String orderId, long version, String key, String reason) {
         return execute(customerId, orderId, version, key, reason.trim(), Action.REFUND);
     }
 
+    /** Runs the action transaction and resolves a concurrent unique-key winner as an idempotent replay. */
     private Order execute(String customerId, String orderId, long version, String key, String reason, Action action) {
         var operation = action == Action.CANCEL ? "orders.cancel" : "orders.refund";
         try {
@@ -61,6 +65,7 @@ class OracleCustomerOrderActionStore implements CustomerOrderActionStore {
         }
     }
 
+    /** Validates that the winning idempotency record represents the exact same customer command. */
     private Order replayAfterRace(String customerId, String orderId, long version, String key, String reason,
                                   Action action, RuntimeException race) {
         var command = commands.findById(customerId + ":" + key).orElseThrow(() -> race);
@@ -70,6 +75,7 @@ class OracleCustomerOrderActionStore implements CustomerOrderActionStore {
         return ownedOrder(customerId, orderId);
     }
 
+    /** Atomically changes order, payment, inventory, supplier hand-off, notifications, and command record. */
     private Order executeOnce(String customerId, String orderId, long version, String key, String reason, Action action) {
         var commandId = customerId + ":" + key;
         var replay = commands.findById(commandId);
@@ -120,6 +126,7 @@ class OracleCustomerOrderActionStore implements CustomerOrderActionStore {
         return result;
     }
 
+    /** Conditionally cancels an unprocessed supplier purchase order and rejects a fulfilment race. */
     private void cancelReadyPurchaseOrder(Order order) {
         purchaseOrders.findByOrderIdForUpdate(order.id()).ifPresent(po -> {
             if (po.status == SupplierPurchaseOrder.Status.PROCESSED) {
@@ -131,6 +138,7 @@ class OracleCustomerOrderActionStore implements CustomerOrderActionStore {
         });
     }
 
+    /** Restores every previously reserved order-line quantity within the action transaction. */
     private void restoreInventory(Order order) {
         for (var line : order.lines()) {
             if (products.restoreStock(line.productId(), line.quantity()) != 1) {
@@ -139,6 +147,7 @@ class OracleCustomerOrderActionStore implements CustomerOrderActionStore {
         }
     }
 
+    /** Enqueues payment and order terminal events in deterministic timestamp order. */
     private void enqueueTerminal(Order order, Action action, Instant now) {
         notifications.enqueue(order, action == Action.CANCEL
                 ? CustomerNotification.Type.PAYMENT_VOIDED : CustomerNotification.Type.PAYMENT_REFUNDED, now);
@@ -146,6 +155,7 @@ class OracleCustomerOrderActionStore implements CustomerOrderActionStore {
                 ? CustomerNotification.Type.ORDER_CANCELLED : CustomerNotification.Type.ORDER_REFUNDED, now.plusMillis(1));
     }
 
+    /** Reloads an order only when it belongs to the authenticated customer. */
     private Order ownedOrder(String customerId, String orderId) {
         return orders.findById(orderId).filter(value -> customerId.equals(value.customerId))
                 .map(OrderJpaEntity::toDomain).orElseThrow(() -> new NotFoundException("Unknown order " + orderId));

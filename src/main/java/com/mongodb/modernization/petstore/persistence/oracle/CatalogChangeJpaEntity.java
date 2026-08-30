@@ -27,13 +27,16 @@ class CatalogChangeJpaEntity {
     @Column(name = "PREVIOUS_VERSION") Long previousVersion;
     @Column(name = "NEW_VERSION", nullable = false) long newVersion;
 
+    /** Creates a catalog change jpa entity and wires its required collaborators. */
     protected CatalogChangeJpaEntity() {}
+    /** Creates a catalog change jpa entity and wires its required collaborators. */
     CatalogChangeJpaEntity(CatalogChange change) {
         id = change.id(); productId = change.productId(); action = change.action(); changedBy = change.changedBy();
         occurredAt = change.occurredAt(); previousPrice = change.previousPrice(); newPrice = change.newPrice();
         previousActive = change.previousActive(); newActive = change.newActive();
         previousVersion = change.previousVersion(); newVersion = change.newVersion();
     }
+    /** Maps this persistence representation to the corresponding domain model. */
     CatalogChange toDomain() {
         return new CatalogChange(id, productId, action, changedBy, occurredAt, previousPrice, newPrice,
                 previousActive, newActive, previousVersion, newVersion);

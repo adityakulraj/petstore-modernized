@@ -44,24 +44,30 @@ class OrderJpaEntity {
     @Column(name = "REVIEWED_AT") Instant reviewedAt;
     @Column(name = "REVIEWED_BY", length = 100) String reviewedBy;
 
+    /** Creates an empty Oracle order entity for JPA. */
     protected OrderJpaEntity() {}
+    /** Creates an Oracle order aggregate from a domain snapshot. */
     OrderJpaEntity(Order order) {
         id = order.id(); customerId = order.customerId(); idempotencyKey = order.idempotencyKey();
         createdAt = order.createdAt(); status = order.status(); shippingAddress = new AddressJpa(order.shippingAddress());
         order.lines().stream().map(OrderLineJpa::new).forEach(lines::add); total = order.total();
         reviewedAt = order.reviewedAt(); reviewedBy = order.reviewedBy();
     }
+    /** Maps this persistence representation to the corresponding domain model. */
     Order toDomain() {
         return new Order(id, customerId, idempotencyKey, createdAt, status, shippingAddress.toDomain(),
                 lines.stream().map(OrderLineJpa::toDomain).toList(), total, version, reviewedAt, reviewedBy);
     }
 
+    /** Provides the persistence mapping behavior for review. */
     void review(String decision, Instant when, String reviewer) {
         status = decision;
         reviewedAt = when;
         reviewedBy = reviewer;
     }
 
+    /** Provides the persistence mapping behavior for allocate inventory. */
     void allocateInventory(String nextStatus) { status = nextStatus; }
+    /** Provides the persistence mapping behavior for customer transition. */
     void customerTransition(String nextStatus) { status = nextStatus; }
 }

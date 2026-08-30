@@ -28,6 +28,7 @@ class ProductJpaEntity {
 
     protected ProductJpaEntity() {}
 
+    /** Creates a product jpa entity and wires its required collaborators. */
     ProductJpaEntity(Product product) {
         id = product.id(); productGroupId = product.productGroupId(); variantName = product.variantName();
         categoryId = product.categoryId(); categoryName = product.categoryName();
@@ -35,22 +36,27 @@ class ProductJpaEntity {
         active = product.active();
     }
 
+    /** Maps this persistence representation to the corresponding domain model. */
     Product toDomain() { return new Product(id, productGroupId == null ? id : productGroupId,
             variantName == null ? "Standard" : variantName, categoryId, categoryName, name, description,
             price, stock, active == null || active, version); }
 
+    /** Provides the persistence mapping behavior for apply catalog metadata. */
     void applyCatalogMetadata(Product product) {
         productGroupId = product.productGroupId(); variantName = product.variantName();
         categoryId = product.categoryId(); categoryName = product.categoryName();
         name = product.name(); description = product.description();
     }
 
+    /** Provides the persistence mapping behavior for apply catalog update. */
     void applyCatalogUpdate(Product product) {
         applyCatalogMetadata(product);
         price = product.price();
         active = product.active();
     }
 
+    /** Provides the persistence mapping behavior for replace stock. */
     void replaceStock(int quantity) { stock = quantity; }
+    /** Provides the persistence mapping behavior for reserve stock. */
     void reserveStock(int quantity) { stock -= quantity; }
 }

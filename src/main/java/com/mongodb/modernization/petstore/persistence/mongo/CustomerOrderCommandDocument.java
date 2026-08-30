@@ -20,7 +20,9 @@ class CustomerOrderCommandDocument {
     long resultVersion;
     Instant createdAt;
 
+    /** Creates a customer order command document and wires its required collaborators. */
     CustomerOrderCommandDocument() {}
+    /** Creates a customer order command document and wires its required collaborators. */
     CustomerOrderCommandDocument(String customerId, String key, String orderId, String action, long expectedVersion,
                                  String reason, String resultStatus, long resultVersion, Instant createdAt) {
         this.id = customerId + ":" + key; this.customerId = customerId; this.idempotencyKey = key;
@@ -28,6 +30,7 @@ class CustomerOrderCommandDocument {
         this.resultStatus = resultStatus; this.resultVersion = resultVersion; this.createdAt = createdAt;
     }
 
+    /** Provides the persistence mapping behavior for matches. */
     boolean matches(String requestedOrderId, String requestedAction, long requestedVersion, String requestedReason) {
         return orderId.equals(requestedOrderId) && action.equals(requestedAction)
                 && expectedVersion == requestedVersion && reason.equals(requestedReason);

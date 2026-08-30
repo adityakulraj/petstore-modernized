@@ -22,6 +22,7 @@ public class AdminHealthController {
     private final DatabaseDiagnostics databaseDiagnostics;
     private final HealthEndpoint health;
 
+    /** Creates a admin health controller and wires its required collaborators. */
     public AdminHealthController(AppProperties properties, RequestTelemetry requests,
                                  DatabaseTelemetry databaseTelemetry, DatabaseDiagnostics databaseDiagnostics,
                                  HealthEndpoint health) {
@@ -33,6 +34,7 @@ public class AdminHealthController {
     }
 
     @GetMapping
+    /** Handles the dashboard HTTP request and returns its API response. */
     public DashboardResponse dashboard() {
         var runtime = ManagementFactory.getRuntimeMXBean();
         var memory = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
@@ -56,21 +58,26 @@ public class AdminHealthController {
                         databaseDiagnostics.queryPlans()));
     }
 
+    /** Handles the dashboard response HTTP request and returns its API response. */
     public record DashboardResponse(String status, String store, Instant startedAt, long uptimeSeconds,
                                     TrafficSummary traffic, JvmSummary jvm, DatabaseSummary database) {}
 
+    /** Handles the traffic summary HTTP request and returns its API response. */
     public record TrafficSummary(long lifetimeRequests, long lifetimeClientErrors, long lifetimeServerErrors,
                                  long windowRequests, long windowClientErrors, long windowServerErrors,
                                  double clientErrorRatePercent, double serverErrorRatePercent,
                                  long requestsThisMinute, double averageLatencyMs, double maxLatencyMs,
                                  List<TrafficPoint> series) {}
 
+    /** Handles the traffic point HTTP request and returns its API response. */
     public record TrafficPoint(Instant timestamp, long requests, long clientErrors, long serverErrors,
                                double averageLatencyMs, double maxLatencyMs) {}
 
+    /** Handles the jvm summary HTTP request and returns its API response. */
     public record JvmSummary(long heapUsedBytes, long heapCommittedBytes, long heapMaxBytes,
                              int liveThreads, int peakThreads, int processors) {}
 
+    /** Handles the database summary HTTP request and returns its API response. */
     public record DatabaseSummary(DatabaseDiagnostics.PoolSnapshot pool,
                                   List<DatabaseTelemetry.OperationSnapshot> operations,
                                   DatabaseDiagnostics.QueryPlanReport queryPlans) {}

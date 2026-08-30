@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 class DemoAccountBootstrap {
     @Bean
+    /** Coordinates the seed demo accounts application use case. */
     ApplicationRunner seedDemoAccounts(CustomerAccountStore store, CustomerAccountService accounts, AppProperties properties) {
         return ignored -> {
             var demo = properties.demo();
@@ -17,6 +18,7 @@ class DemoAccountBootstrap {
         };
     }
 
+    /** Coordinates the seed if missing application use case. */
     private static void seedIfMissing(CustomerAccountStore store, CustomerAccountService accounts, String username, String password,
                                       String fullName, String email) {
         if (store.account(username).isEmpty()) {

@@ -18,21 +18,28 @@ import java.util.function.Function;
 class MongoPaymentStore implements PaymentStore {
     private final MongoPaymentRepository payments;
 
+    /** Creates a mongo payment store and wires its required collaborators. */
     MongoPaymentStore(MongoPaymentRepository payments) { this.payments = payments; }
 
+    /** Executes the authorize persistence operation against the selected database. */
     @Override public Payment authorize(Order order, String token, Instant when) {
         return payments.findById(order.id()).map(PaymentDocument::toDomain).orElseGet(() ->
                 payments.insert(new PaymentDocument(Payment.authorize(order, token, when))).toDomain());
     }
 
+    /** Executes the capture persistence operation against the selected database. */
     @Override public Payment capture(Order order, Instant when) { return transition(order, value -> value.capture(when)); }
+    /** Executes the void authorization persistence operation against the selected database. */
     @Override public Payment voidAuthorization(Order order, Instant when) { return transition(order, value -> value.voidAuthorization(when)); }
+    /** Executes the refund persistence operation against the selected database. */
     @Override public Payment refund(Order order, Instant when) { return transition(order, value -> value.refund(when)); }
 
+    /** Executes the payments persistence operation against the selected database. */
     @Override public List<Payment> payments(String customerId) {
         return payments.findByCustomerIdOrderByCreatedAtDesc(customerId).stream().map(PaymentDocument::toDomain).toList();
     }
 
+    /** Executes the transition persistence operation against the selected database. */
     private Payment transition(Order order, Function<Payment, Payment> transition) {
         var document = payments.findById(order.id())
                 .orElseThrow(() -> new NotFoundException("Payment not found for order " + order.id()));

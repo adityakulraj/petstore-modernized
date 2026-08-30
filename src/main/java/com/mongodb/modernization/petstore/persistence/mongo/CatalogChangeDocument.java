@@ -25,13 +25,16 @@ class CatalogChangeDocument {
     Long previousVersion;
     long newVersion;
 
+    /** Creates a catalog change document and wires its required collaborators. */
     CatalogChangeDocument() {}
+    /** Creates a catalog change document and wires its required collaborators. */
     CatalogChangeDocument(CatalogChange change) {
         id = change.id(); productId = change.productId(); action = change.action(); changedBy = change.changedBy();
         occurredAt = change.occurredAt(); previousPrice = change.previousPrice(); newPrice = change.newPrice();
         previousActive = change.previousActive(); newActive = change.newActive();
         previousVersion = change.previousVersion(); newVersion = change.newVersion();
     }
+    /** Maps this persistence representation to the corresponding domain model. */
     CatalogChange toDomain() {
         return new CatalogChange(id, productId, action, changedBy, occurredAt, previousPrice, newPrice,
                 previousActive, newActive, previousVersion, newVersion);

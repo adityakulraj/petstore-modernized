@@ -18,13 +18,16 @@ class MongoDatabaseDiagnostics implements DatabaseDiagnostics {
     private final MongoPoolMetrics pool;
     private volatile QueryPlanReport cached;
 
+    /** Creates a mongo database diagnostics and wires its required collaborators. */
     MongoDatabaseDiagnostics(MongoTemplate template, MongoPoolMetrics pool) {
         this.template = template;
         this.pool = pool;
     }
 
+    /** Collects or updates observability data for pool. */
     @Override public PoolSnapshot pool() { return pool.snapshot(); }
 
+    /** Collects or updates observability data for query plans. */
     @Override public QueryPlanReport queryPlans() {
         var current = cached;
         if (current != null && current.capturedAt().plus(CACHE_FOR).isAfter(Instant.now())) return current;
@@ -51,6 +54,7 @@ class MongoDatabaseDiagnostics implements DatabaseDiagnostics {
         }
     }
 
+    /** Collects or updates observability data for explain. */
     private QueryPlanSnapshot explain(String operation, String collection, Document filter, Document sort) {
         var find = new Document("find", collection).append("filter", filter);
         if (sort != null) find.append("sort", sort);
@@ -74,6 +78,7 @@ class MongoDatabaseDiagnostics implements DatabaseDiagnostics {
         }
     }
 
+    /** Collects or updates observability data for find scan stage. */
     private static Document findScanStage(Object node) {
         if (node instanceof Document document) {
             var stage = document.getString("stage");
@@ -91,14 +96,17 @@ class MongoDatabaseDiagnostics implements DatabaseDiagnostics {
         return null;
     }
 
+    /** Collects or updates observability data for normalize stage. */
     private static String normalizeStage(String stage) {
         return stage == null ? "UNKNOWN" : stage.contains("IXSCAN") ? "IXSCAN" : stage;
     }
 
+    /** Collects or updates observability data for number. */
     private static long number(Document document, String key) {
         if (document == null || !(document.get(key) instanceof Number number)) return 0;
         return number.longValue();
     }
 
+    /** Collects or updates observability data for value. */
     private static String value(Object value) { return value == null ? "" : value.toString(); }
 }

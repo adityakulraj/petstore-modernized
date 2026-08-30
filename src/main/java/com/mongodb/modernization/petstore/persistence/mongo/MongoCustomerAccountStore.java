@@ -13,10 +13,13 @@ import java.util.Optional;
 class MongoCustomerAccountStore implements CustomerAccountStore {
     private final MongoCustomerAccountRepository accounts;
     private final DatabaseExecutor database;
+    /** Creates a mongo customer account store and wires its required collaborators. */
     MongoCustomerAccountStore(MongoCustomerAccountRepository accounts, DatabaseExecutor database) { this.accounts = accounts; this.database = database; }
+    /** Executes the account persistence operation against the selected database. */
     @Override public Optional<CustomerAccount> account(String username) {
         return database.execute("account.by_username", true, () -> accounts.findById(username).map(CustomerAccountDocument::toDomain));
     }
+    /** Validates and persists . */
     @Override public CustomerAccount save(CustomerAccount account) {
         return database.execute("account.save", false, () -> accounts.save(new CustomerAccountDocument(account)).toDomain());
     }

@@ -13,9 +13,12 @@ class CartLineJpa {
     @Column(name = "UNIT_PRICE", nullable = false, precision = 12, scale = 2) BigDecimal unitPrice;
     @Column(nullable = false) int quantity;
 
+    /** Creates a cart line jpa and wires its required collaborators. */
     protected CartLineJpa() {}
+    /** Creates a cart line jpa and wires its required collaborators. */
     CartLineJpa(CartLine line) {
         productId = line.productId(); productName = line.productName(); unitPrice = line.unitPrice(); quantity = line.quantity();
     }
+    /** Maps this persistence representation to the corresponding domain model. */
     CartLine toDomain() { return new CartLine(productId, productName, unitPrice, quantity); }
 }

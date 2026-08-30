@@ -15,12 +15,14 @@ class MongoSalesAnalyticsSource implements SalesAnalyticsSource {
     private final MongoOrderRepository orders;
     private final DatabaseExecutor database;
 
+    /** Creates a mongo sales analytics source and wires its required collaborators. */
     MongoSalesAnalyticsSource(MongoOrderRepository orders, DatabaseExecutor database) {
         this.orders = orders;
         this.database = database;
     }
 
     @Override
+    /** Executes the orders between persistence operation against the selected database. */
     public List<Order> ordersBetween(Instant fromInclusive, Instant toExclusive) {
         return database.execute("admin.analytics.sales", true, () -> orders
                 .findForSalesAnalytics(fromInclusive, toExclusive)

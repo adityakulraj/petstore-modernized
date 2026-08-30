@@ -20,11 +20,13 @@ class OracleDatabaseDiagnostics implements DatabaseDiagnostics {
     private final HikariDataSource dataSource;
     private volatile QueryPlanReport cached;
 
+    /** Creates Oracle pool and query-plan diagnostics from JDBC metadata and the shared data source. */
     OracleDatabaseDiagnostics(JdbcTemplate jdbc, DataSource dataSource) throws Exception {
         this.jdbc = jdbc;
         this.dataSource = dataSource.unwrap(HikariDataSource.class);
     }
 
+    /** Collects or updates observability data for pool. */
     @Override public PoolSnapshot pool() {
         var metrics = dataSource.getHikariPoolMXBean();
         if (metrics == null) {
@@ -36,6 +38,7 @@ class OracleDatabaseDiagnostics implements DatabaseDiagnostics {
                 metrics.getThreadsAwaitingConnection(), 0, 0);
     }
 
+    /** Collects or updates observability data for query plans. */
     @Override public QueryPlanReport queryPlans() {
         var current = cached;
         if (current != null && current.capturedAt().plus(CACHE_FOR).isAfter(Instant.now())) return current;
@@ -58,6 +61,7 @@ class OracleDatabaseDiagnostics implements DatabaseDiagnostics {
         }
     }
 
+    /** Collects or updates observability data for explain. */
     private QueryPlanSnapshot explain(String operation, String sql) {
         String statementId = "PS" + UUID.randomUUID().toString().replace("-", "").substring(0, 20);
         try {
@@ -82,6 +86,7 @@ class OracleDatabaseDiagnostics implements DatabaseDiagnostics {
         }
     }
 
+    /** Collects or updates observability data for plan row. */
     private record PlanRow(String operation, String options, String objectName, long cost, long cardinality) {
         private PlanRow {
             operation = operation == null ? "" : operation;

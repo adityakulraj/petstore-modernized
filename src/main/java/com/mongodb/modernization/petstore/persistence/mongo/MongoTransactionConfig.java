@@ -10,6 +10,7 @@ import org.springframework.data.mongodb.MongoTransactionManager;
 @Profile("mongo")
 class MongoTransactionConfig {
     @Bean
+    /** Configures or applies mongo transaction manager behavior for the application runtime. */
     MongoTransactionManager mongoTransactionManager(MongoDatabaseFactory factory) {
         return new MongoTransactionManager(factory);
     }

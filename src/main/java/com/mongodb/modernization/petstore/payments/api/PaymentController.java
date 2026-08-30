@@ -14,9 +14,11 @@ import java.util.List;
 public class PaymentController {
     private final StorefrontService storefront;
 
+    /** Creates a payment controller and wires its required collaborators. */
     public PaymentController(StorefrontService storefront) { this.storefront = storefront; }
 
     @GetMapping
+    /** Handles the payments HTTP request and returns its API response. */
     public List<Payment> payments(Authentication authentication) {
         return storefront.payments(authentication.getName());
     }

@@ -40,6 +40,7 @@ class OracleSupplierStore implements SupplierStore {
     private final BigDecimal approvalThreshold;
     private final Clock clock = Clock.systemUTC();
 
+    /** Creates the Oracle supplier adapter with its JPA repositories and transaction dependencies. */
     OracleSupplierStore(JpaProductRepository products, JpaSupplierPurchaseOrderRepository purchaseOrders,
                         JpaOrderRepository orders, JpaSupplierInventoryCommandRepository inventoryCommands,
                         PlatformTransactionManager transactionManager, DatabaseExecutor database,
@@ -56,12 +57,14 @@ class OracleSupplierStore implements SupplierStore {
     }
 
     @Override
+    /** Returns all independently stocked item variants in stable SKU order. */
     public List<Product> inventory() {
         return database.execute("supplier.inventory.all", true, () -> products.findAll().stream()
                 .map(ProductJpaEntity::toDomain).sorted(Comparator.comparing(Product::id)).toList());
     }
 
     @Override
+    /** Replaces absolute stock once per idempotency key and rejects stale product versions. */
     public Product replaceInventory(String productId, long expectedVersion, int quantity, String idempotencyKey) {
         return database.execute("supplier.inventory.replace", true, () -> transactions.execute(ignored -> {
             var replay = inventoryCommands.findById(idempotencyKey);
@@ -91,11 +94,13 @@ class OracleSupplierStore implements SupplierStore {
     }
 
     @Override
+    /** Returns backordered customer orders oldest first for deterministic replenishment. */
     public List<Order> backorders() {
         return database.execute("supplier.backorders.all", true, () -> orders
                 .findAllByStatusOrderByCreatedAtAsc(Order.BACKORDERED).stream().map(OrderJpaEntity::toDomain).toList());
     }
 
+    /** Validates and returns the prior result of an identical inventory command. */
     private Product replayProduct(SupplierInventoryCommandJpaEntity command, String productId,
                                   long expectedVersion, int quantity) {
         if (!command.matches(productId, expectedVersion, quantity)) {
@@ -108,6 +113,7 @@ class OracleSupplierStore implements SupplierStore {
                 command.resultStock, command.resultVersion);
     }
 
+    /** Allocates replenished stock oldest-first and advances only fully satisfiable backorders. */
     private void releaseBackorders() {
         for (var entity : orders.findByStatusForUpdate(Order.BACKORDERED)) {
             var lockedProducts = entity.lines.stream().sorted(java.util.Comparator.comparing(line -> line.productId))
@@ -137,6 +143,7 @@ class OracleSupplierStore implements SupplierStore {
     }
 
     @Override
+    /** Returns supplier purchase orders in reverse creation order. */
     public List<SupplierPurchaseOrder> purchaseOrders() {
         return database.execute("supplier.purchase_orders.all", true,
                 () -> purchaseOrders.findAllByOrderByCreatedAtDesc().stream()
@@ -144,6 +151,7 @@ class OracleSupplierStore implements SupplierStore {
     }
 
     @Override
+    /** Idempotently creates one deterministic supplier purchase order per approved customer order. */
     public SupplierPurchaseOrder ensurePurchaseOrder(Order order) {
         try {
             return database.execute("supplier.purchase_order.ensure", true, () -> transactions.execute(ignored ->
@@ -163,6 +171,7 @@ class OracleSupplierStore implements SupplierStore {
     }
 
     @Override
+    /** Atomically processes fulfilment, completes the order, captures payment, and emits notifications. */
     public SupplierPurchaseOrder processPurchaseOrder(String purchaseOrderId, long expectedVersion) {
         try {
             return database.execute("supplier.purchase_order.process", true, () -> transactions.execute(ignored -> {
@@ -195,6 +204,7 @@ class OracleSupplierStore implements SupplierStore {
         }
     }
 
+    /** Repairs payment capture and terminal notifications when a processed replay follows an interrupted hand-off. */
     private void ensureCompletedPaymentAndNotifications(SupplierPurchaseOrderJpaEntity purchaseOrder) {
         var order = orders.findById(purchaseOrder.orderId)
                 .orElseThrow(() -> new NotFoundException("Unknown order " + purchaseOrder.orderId)).toDomain();
@@ -207,6 +217,7 @@ class OracleSupplierStore implements SupplierStore {
         notifications.enqueue(order, CustomerNotification.Type.ORDER_COMPLETED, occurredAt.plusMillis(1));
     }
 
+    /** Reloads and validates the committed result of a concurrent supplier-processing winner. */
     private SupplierPurchaseOrder processedReplay(String purchaseOrderId, RuntimeException conflict) {
         return database.execute("supplier.purchase_order.replay", true, () -> {
             var purchaseOrder = purchaseOrders.findById(purchaseOrderId)

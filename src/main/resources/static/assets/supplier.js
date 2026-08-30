@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (error) { toast(error.message, true); }
 });
 
+/** Calls an application API and attaches CSRF credentials to protected mutations. */
 async function api(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (options.method && options.method !== 'GET') {
@@ -29,6 +30,7 @@ async function api(path, options = {}) {
   return response.status === 204 ? null : response.json();
 }
 
+/** Loads inventory from the API and refreshes the corresponding client state. */
 async function loadInventory() {
   state.inventory = await api('/api/v1/supplier/inventory');
   document.querySelector('#inventory-body').innerHTML = state.inventory.map(product => `<tr>
@@ -39,6 +41,7 @@ async function loadInventory() {
   document.querySelectorAll('[data-save]').forEach(button => button.addEventListener('click', () => updateInventory(button.dataset.save, button)));
 }
 
+/** Updates inventory and refreshes the displayed state. */
 async function updateInventory(productId, button) {
   const product = state.inventory.find(item => item.id === productId);
   const quantity = Number(document.querySelector(`[data-quantity="${CSS.escape(productId)}"]`).value);
@@ -54,6 +57,7 @@ async function updateInventory(productId, button) {
   finally { button.disabled = false; }
 }
 
+/** Loads backorders from the API and refreshes the corresponding client state. */
 async function loadBackorders() {
   state.backorders = await api('/api/v1/supplier/backorders');
   document.querySelector('#backorder-count').textContent = state.backorders.length;
@@ -64,6 +68,7 @@ async function loadBackorders() {
   </article>`).join('') || '<p class="empty">No orders are waiting for inventory.</p>';
 }
 
+/** Loads purchase orders from the API and refreshes the corresponding client state. */
 async function loadPurchaseOrders() {
   state.purchaseOrders = await api('/api/v1/supplier/purchase-orders');
   document.querySelector('#purchase-order-list').innerHTML = state.purchaseOrders.map(po => `<article class="purchase-order">
@@ -75,6 +80,7 @@ async function loadPurchaseOrders() {
   document.querySelectorAll('[data-process]').forEach(button => button.addEventListener('click', () => processPurchaseOrder(button.dataset.process, button)));
 }
 
+/** Processes a ready supplier purchase order with optimistic-lock recovery on conflicts. */
 async function processPurchaseOrder(id, button) {
   const purchaseOrder = state.purchaseOrders.find(po => po.id === id);
   button.disabled = true;
@@ -84,6 +90,7 @@ async function processPurchaseOrder(id, button) {
   } catch (error) { toast(error.message, true); await loadPurchaseOrders().catch(() => {}); }
 }
 
+/** Switches the storefront to the requested view and loads any view-specific data. */
 async function show(view) {
   document.querySelectorAll('.view').forEach(section => section.classList.toggle('hidden', section.id !== view));
   if (view === 'inventory' && state.inventory.length === 0) await loadInventory().catch(error => toast(error.message, true));
@@ -91,11 +98,14 @@ async function show(view) {
   if (view === 'purchase-orders' && state.purchaseOrders.length === 0) await loadPurchaseOrders().catch(error => toast(error.message, true));
 }
 
+/** Performs CSRF-protected logout and returns to the storefront. */
 async function signOut() {
   if (!state.csrf) state.csrf = await fetch('/api/v1/csrf', { credentials: 'same-origin' }).then(response => response.json());
   await fetch('/logout', { method: 'POST', credentials: 'same-origin', headers: { [state.csrf.headerName]: state.csrf.token } });
   location.href = '/';
 }
 
+/** Displays a transient success or error message to the user. */
 function toast(message, error = false) { const element = document.querySelector('#toast'); element.textContent = message; element.className = error ? 'show error' : 'show'; setTimeout(() => element.className = '', 3500); }
+/** Escapes untrusted text before it is inserted into generated HTML. */
 function escapeHtml(value) { const span = document.createElement('span'); span.textContent = String(value); return span.innerHTML; }

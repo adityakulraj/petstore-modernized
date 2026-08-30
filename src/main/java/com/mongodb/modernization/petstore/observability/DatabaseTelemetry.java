@@ -12,11 +12,13 @@ import java.util.concurrent.atomic.LongAdder;
 public class DatabaseTelemetry {
     private final ConcurrentHashMap<String, OperationCounters> operations = new ConcurrentHashMap<>();
 
+    /** Collects or updates observability data for record. */
     void record(String operation, long durationNanos, boolean success, int retries) {
         operations.computeIfAbsent(operation, ignored -> new OperationCounters())
                 .record(durationNanos, success, retries);
     }
 
+    /** Collects or updates observability data for snapshot. */
     public List<OperationSnapshot> snapshot() {
         return operations.entrySet().stream()
                 .map(entry -> entry.getValue().snapshot(entry.getKey()))
@@ -31,6 +33,7 @@ public class DatabaseTelemetry {
         private final LongAdder totalNanos = new LongAdder();
         private final AtomicLong maxNanos = new AtomicLong();
 
+        /** Collects or updates observability data for record. */
         private void record(long durationNanos, boolean success, int retryCount) {
             calls.increment();
             if (!success) failures.increment();
@@ -39,6 +42,7 @@ public class DatabaseTelemetry {
             maxNanos.accumulateAndGet(durationNanos, Math::max);
         }
 
+        /** Collects or updates observability data for snapshot. */
         private OperationSnapshot snapshot(String operation) {
             long count = calls.sum();
             return new OperationSnapshot(operation, count, failures.sum(), retries.sum(),
@@ -47,6 +51,7 @@ public class DatabaseTelemetry {
         }
     }
 
+    /** Collects or updates observability data for operation snapshot. */
     public record OperationSnapshot(String operation, long calls, long failures, long retries,
                                     double averageLatencyMs, double maxLatencyMs) {}
 }

@@ -28,6 +28,7 @@ class OracleAdminOrderStore implements AdminOrderStore {
     private final PaymentStore payments;
     private final Clock clock = Clock.systemUTC();
 
+    /** Creates the Oracle administrator-order adapter with transactional review dependencies. */
     OracleAdminOrderStore(JpaOrderRepository orders, JpaProductRepository products,
                           PlatformTransactionManager transactionManager, DatabaseExecutor database,
                           CustomerNotificationStore notifications, PaymentStore payments) {
@@ -40,12 +41,14 @@ class OracleAdminOrderStore implements AdminOrderStore {
     }
 
     @Override
+    /** Executes the orders persistence operation against the selected database. */
     public List<Order> orders() {
         return database.execute("admin.orders.all", true, () -> orders.findAllByOrderByCreatedAtDesc().stream()
                 .map(OrderJpaEntity::toDomain).toList());
     }
 
     @Override
+    /** Executes the review persistence operation against the selected database. */
     public Order review(String orderId, long expectedVersion, Decision decision, String reviewer) {
         return database.execute(decision == Decision.APPROVED ? "admin.order.approve" : "admin.order.deny", true,
                 () -> transactions.execute(ignored -> {
@@ -81,6 +84,7 @@ class OracleAdminOrderStore implements AdminOrderStore {
                 }));
     }
 
+    /** Executes the enqueue decision persistence operation against the selected database. */
     private void enqueueDecision(Order order, Decision decision) {
         var type = decision == Decision.APPROVED
                 ? CustomerNotification.Type.ORDER_APPROVED : CustomerNotification.Type.ORDER_DENIED;
@@ -88,6 +92,7 @@ class OracleAdminOrderStore implements AdminOrderStore {
         notifications.enqueue(order, type, decision == Decision.DENIED ? occurredAt.plusMillis(1) : occurredAt);
     }
 
+    /** Executes the compatible persistence operation against the selected database. */
     private static boolean compatible(String status, Decision decision) {
         return decision == Decision.APPROVED
                 ? Order.APPROVED.equals(status) || Order.COMPLETED.equals(status)

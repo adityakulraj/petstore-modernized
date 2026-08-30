@@ -3,6 +3,7 @@ package com.mongodb.modernization.petstore.catalog.domain;
 import java.math.BigDecimal;
 import java.time.Instant;
 
+/** Creates a catalog change and wires its required collaborators. */
 public record CatalogChange(String id, String productId, Action action, String changedBy, Instant occurredAt,
                             BigDecimal previousPrice, BigDecimal newPrice,
                             Boolean previousActive, Boolean newActive,

@@ -33,9 +33,12 @@ class PaymentJpaEntity {
     @Column(name = "REFUNDED_AT") Instant refundedAt;
     @Version long version;
 
+    /** Creates a payment jpa entity and wires its required collaborators. */
     protected PaymentJpaEntity() {}
+    /** Creates a payment jpa entity and wires its required collaborators. */
     PaymentJpaEntity(Payment payment) { replaceWith(payment); }
 
+    /** Copies the supplied domain state into this mutable persistence representation. */
     void replaceWith(Payment payment) {
         id = payment.id(); orderId = payment.orderId(); customerId = payment.customerId();
         amount = payment.amount(); currency = payment.currency(); methodLabel = payment.methodLabel();
@@ -45,6 +48,7 @@ class PaymentJpaEntity {
         voidedAt = payment.voidedAt(); refundedAt = payment.refundedAt();
     }
 
+    /** Maps this persistence representation to the corresponding domain model. */
     Payment toDomain() {
         return new Payment(id, orderId, customerId, amount, currency, methodLabel, status,
                 authorizationReference, captureReference, refundReference, createdAt, authorizedAt,

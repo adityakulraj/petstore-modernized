@@ -11,9 +11,11 @@ import java.util.concurrent.TimeUnit;
 @Configuration
 @Profile("mongo")
 class MongoObservabilityConfig {
+    /** Configures or applies mongo pool metrics behavior for the application runtime. */
     @Bean MongoPoolMetrics mongoPoolMetrics() { return new MongoPoolMetrics(); }
 
     @Bean
+    /** Configures or applies monitored mongo pool behavior for the application runtime. */
     MongoClientSettingsBuilderCustomizer monitoredMongoPool(DatabaseProperties properties, MongoPoolMetrics metrics) {
         return settings -> {
             settings.retryReads(true).retryWrites(true);

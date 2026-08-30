@@ -14,13 +14,16 @@ public class AdminOrderService {
     private final AdminOrderStore store;
     private final SupplierService supplier;
 
+    /** Creates a admin order service and wires its required collaborators. */
     public AdminOrderService(AdminOrderStore store, SupplierService supplier) {
         this.store = store;
         this.supplier = supplier;
     }
 
+    /** Coordinates the orders application use case. */
     public List<Order> orders() { return store.orders(); }
 
+    /** Coordinates the review application use case. */
     public Order review(String orderId, long expectedVersion, AdminOrderStore.Decision decision, String reviewer) {
         var order = store.review(orderId, expectedVersion, decision, reviewer);
         if (decision == AdminOrderStore.Decision.APPROVED) supplier.ensurePurchaseOrder(order);

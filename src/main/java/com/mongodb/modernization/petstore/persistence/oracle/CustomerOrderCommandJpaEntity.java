@@ -23,7 +23,9 @@ class CustomerOrderCommandJpaEntity {
     @Column(name = "RESULT_VERSION", nullable = false) long resultVersion;
     @Column(name = "CREATED_AT", nullable = false) Instant createdAt;
 
+    /** Creates a customer order command jpa entity and wires its required collaborators. */
     protected CustomerOrderCommandJpaEntity() {}
+    /** Creates a customer order command jpa entity and wires its required collaborators. */
     CustomerOrderCommandJpaEntity(String customerId, String key, String orderId, String action, long expectedVersion,
                                   String reason, String resultStatus, long resultVersion, Instant createdAt) {
         this.id = customerId + ":" + key; this.customerId = customerId; this.idempotencyKey = key;
@@ -31,6 +33,7 @@ class CustomerOrderCommandJpaEntity {
         this.resultStatus = resultStatus; this.resultVersion = resultVersion; this.createdAt = createdAt;
     }
 
+    /** Provides the persistence mapping behavior for matches. */
     boolean matches(String requestedOrderId, String requestedAction, long requestedVersion, String requestedReason) {
         return orderId.equals(requestedOrderId) && action.equals(requestedAction)
                 && expectedVersion == requestedVersion && reason.equals(requestedReason);

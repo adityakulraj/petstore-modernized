@@ -16,11 +16,15 @@ public class CatalogService {
     private static final Logger LOG = LoggerFactory.getLogger(CatalogService.class);
     private final CatalogStore store;
 
+    /** Creates a catalog service and wires its required collaborators. */
     public CatalogService(CatalogStore store) { this.store = store; }
 
+    /** Coordinates the products application use case. */
     public List<Product> products() { return store.products(); }
+    /** Coordinates the changes application use case. */
     public List<CatalogChange> changes() { return store.changes(); }
 
+    /** Creates . */
     public Product create(String id, String productGroupId, String variantName, String categoryId,
                           String categoryName, String name, String description, BigDecimal price,
                           boolean active, String changedBy) {
@@ -31,6 +35,7 @@ public class CatalogService {
         return created;
     }
 
+    /** Coordinates the update application use case. */
     public Product update(String id, long expectedVersion, String productGroupId, String variantName,
                           String categoryId, String categoryName, String name, String description,
                           BigDecimal price, boolean active, String changedBy) {
@@ -42,9 +47,12 @@ public class CatalogService {
         return updated;
     }
 
+    /** Coordinates the code application use case. */
     private static String code(String value) { return value.trim().toUpperCase(Locale.ROOT); }
+    /** Coordinates the text application use case. */
     private static String text(String value) { return value.trim(); }
 
+    /** Writes structured telemetry for . */
     private static void log(String event, Product product, String changedBy) {
         LOG.atInfo().addKeyValue("event", event).addKeyValue("productId", product.id())
                 .addKeyValue("price", product.price()).addKeyValue("active", product.active())

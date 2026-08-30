@@ -28,10 +28,12 @@ public class MyListService {
     private final Clock clock;
 
     @Autowired
+    /** Creates a my list service and wires its required collaborators. */
     public MyListService(MyListStore lists, StorefrontStore storefront, CustomerAccountService accounts) {
         this(lists, storefront, accounts, Clock.systemUTC());
     }
 
+    /** Creates a my list service and wires its required collaborators. */
     MyListService(MyListStore lists, StorefrontStore storefront, CustomerAccountService accounts, Clock clock) {
         this.lists = lists;
         this.storefront = storefront;
@@ -39,6 +41,7 @@ public class MyListService {
         this.clock = clock;
     }
 
+    /** Coordinates the my list application use case. */
     public MyListView myList(String customerId) {
         var account = accounts.account(customerId);
         var catalog = storefront.products();
@@ -50,6 +53,7 @@ public class MyListService {
         return new MyListView(account.myListPreference(), favorites, recommendations);
     }
 
+    /** Coordinates the add application use case. */
     public MyListView add(String customerId, String itemId) {
         requireItem(itemId);
         lists.add(customerId, itemId, Instant.now(clock));
@@ -58,6 +62,7 @@ public class MyListService {
         return myList(customerId);
     }
 
+    /** Coordinates the remove application use case. */
     public MyListView remove(String customerId, String itemId) {
         lists.remove(customerId, itemId);
         LOG.atInfo().addKeyValue("event", "my_list.item.removed").addKeyValue("customerId", customerId)
@@ -65,10 +70,12 @@ public class MyListService {
         return myList(customerId);
     }
 
+    /** Validates the required item precondition. */
     private void requireItem(String itemId) {
         storefront.product(itemId).orElseThrow(() -> new NotFoundException("Unknown product " + itemId));
     }
 
+    /** Coordinates the recommendations application use case. */
     private static List<Product> recommendations(List<Product> catalog, List<Product> favorites,
                                                  String favoriteCategory) {
         var favoriteIds = favorites.stream().map(Product::id).collect(Collectors.toSet());
@@ -83,11 +90,13 @@ public class MyListService {
         return selected.values().stream().limit(RECOMMENDATION_LIMIT).toList();
     }
 
+    /** Coordinates the add matching application use case. */
     private static void addMatching(LinkedHashMap<String, Product> selected, List<Product> catalog,
                                     Predicate<Product> predicate, java.util.Set<String> excluded) {
         catalog.stream().filter(product -> !excluded.contains(product.id())).filter(predicate)
                 .forEach(product -> selected.putIfAbsent(product.id(), product));
     }
 
+    /** Coordinates the my list view application use case. */
     public record MyListView(boolean enabled, List<Product> favorites, List<Product> recommendations) {}
 }

@@ -16,9 +16,11 @@ import java.time.ZoneOffset;
 public class SalesAnalyticsController {
     private final SalesAnalyticsService analytics;
 
+    /** Creates a sales analytics controller and wires its required collaborators. */
     public SalesAnalyticsController(SalesAnalyticsService analytics) { this.analytics = analytics; }
 
     @GetMapping("/sales")
+    /** Handles the sales HTTP request and returns its API response. */
     public SalesAnalytics sales(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,

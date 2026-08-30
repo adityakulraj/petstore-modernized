@@ -14,9 +14,11 @@ import java.util.Map;
 public class SessionController {
     private final AppProperties properties;
 
+    /** Creates a session controller and wires its required collaborators. */
     public SessionController(AppProperties properties) { this.properties = properties; }
 
     @GetMapping("/session")
+    /** Handles the session HTTP request and returns its API response. */
     public Map<String, Object> session(Authentication authentication) {
         var admin = authentication != null && authentication.getAuthorities().stream()
                 .anyMatch(authority -> authority.getAuthority().equals("ROLE_ADMIN"));
@@ -28,6 +30,7 @@ public class SessionController {
     }
 
     @GetMapping("/csrf")
+    /** Handles the csrf HTTP request and returns its API response. */
     public Map<String, String> csrf(CsrfToken token) {
         return Map.of("headerName", token.getHeaderName(), "token", token.getToken());
     }

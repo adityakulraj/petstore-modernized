@@ -16,6 +16,7 @@ class FavoriteItemDocument {
     String itemId;
     Instant addedAt;
 
+    /** Maps this persistence representation to the corresponding domain model. */
     FavoriteItem toDomain() {
         return new FavoriteItem(customerId, itemId, addedAt);
     }

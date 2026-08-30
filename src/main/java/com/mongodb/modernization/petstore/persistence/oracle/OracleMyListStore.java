@@ -16,12 +16,14 @@ class OracleMyListStore implements MyListStore {
     private final JpaFavoriteItemRepository favorites;
     private final DatabaseExecutor database;
 
+    /** Creates the Oracle MyList adapter with its repositories and database executor. */
     OracleMyListStore(JpaFavoriteItemRepository favorites, DatabaseExecutor database) {
         this.favorites = favorites;
         this.database = database;
     }
 
     @Override
+    /** Executes the favorites persistence operation against the selected database. */
     public List<FavoriteItem> favorites(String customerId) {
         return database.execute("my_list.items.all", true,
                 () -> favorites.findByCustomerIdOrderByAddedAtDesc(customerId).stream()
@@ -29,6 +31,7 @@ class OracleMyListStore implements MyListStore {
     }
 
     @Override
+    /** Executes the add persistence operation against the selected database. */
     public void add(String customerId, String itemId, Instant addedAt) {
         var id = customerId + ":" + itemId;
         try {
@@ -40,6 +43,7 @@ class OracleMyListStore implements MyListStore {
     }
 
     @Override
+    /** Executes the remove persistence operation against the selected database. */
     public void remove(String customerId, String itemId) {
         database.execute("my_list.item.remove", true, () -> favorites.deleteById(customerId + ":" + itemId));
     }

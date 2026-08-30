@@ -51,6 +51,7 @@ class MongoStorefrontStore implements StorefrontStore {
     private final BigDecimal approvalThreshold;
     private final Clock clock = Clock.systemUTC();
 
+    /** Creates the MongoDB storefront adapter with one transaction template and shared database executor. */
     MongoStorefrontStore(MongoProductRepository products, MongoCartRepository carts,
                          MongoOrderRepository orders, MongoTemplate template,
                          @Qualifier("mongoTransactionManager") PlatformTransactionManager transactionManager,
@@ -64,6 +65,7 @@ class MongoStorefrontStore implements StorefrontStore {
         this.approvalThreshold = properties.admin().approvalThreshold();
     }
 
+    /** Queries active products, pushes category filtering into MongoDB, and returns stable ID ordering. */
     @Override public List<Product> products(String categoryId) {
         boolean filtered = categoryId != null && !categoryId.isBlank();
         return database.execute(filtered ? "catalog.products.by_category" : "catalog.products.all", true,
@@ -72,12 +74,14 @@ class MongoStorefrontStore implements StorefrontStore {
                 .map(ProductDocument::toDomain).filter(Product::active)
                 .sorted(Comparator.comparing(Product::id)).toList());
     }
+    /** Finds one active product by SKU and hides archived catalog entries. */
     @Override public Optional<Product> product(String productId) {
         return database.execute("catalog.product.by_id", true,
                 () -> products.findById(productId).map(ProductDocument::toDomain).filter(Product::active));
     }
 
     @Override
+    /** Loads or race-safely creates the customer's versioned cart. */
     public Cart cart(String customerId) {
         return database.execute("cart.by_customer", true, () -> transactions.execute(ignored -> {
             try {
@@ -89,6 +93,7 @@ class MongoStorefrontStore implements StorefrontStore {
     }
 
     @Override @Transactional("mongoTransactionManager")
+    /** Adds a product to a cart inside a MongoDB transaction using optimistic locking. */
     public Cart addToCart(String customerId, long expectedVersion, String productId, int quantity) {
         return database.execute("cart.add", false, () -> {
             var product = products.findById(productId).map(ProductDocument::toDomain)
@@ -97,16 +102,19 @@ class MongoStorefrontStore implements StorefrontStore {
         });
     }
     @Override @Transactional("mongoTransactionManager")
+    /** Replaces an existing cart-line quantity using the caller's expected version. */
     public Cart updateCart(String customerId, long expectedVersion, String productId, int quantity) {
         return database.execute("cart.update", false,
                 () -> mutateCart(customerId, expectedVersion, cart -> cart.update(productId, quantity)));
     }
     @Override @Transactional("mongoTransactionManager")
+    /** Removes a cart line using the caller's expected version. */
     public Cart removeFromCart(String customerId, long expectedVersion, String productId) {
         return database.execute("cart.remove", false,
                 () -> mutateCart(customerId, expectedVersion, cart -> cart.remove(productId)));
     }
 
+    /** Applies one cart transformation and converts concurrent saves into an HTTP-level conflict. */
     private Cart mutateCart(String customerId, long expectedVersion, UnaryOperator<Cart> mutation) {
         try {
             var document = carts.findById(customerId).orElseGet(() -> new CartDocument(customerId));
@@ -120,18 +128,21 @@ class MongoStorefrontStore implements StorefrontStore {
     }
 
     @Override
+    /** Delegates legacy-compatible checkout to the approved opaque demo-payment token. */
     public Order checkout(String customerId, long expectedCartVersion, String key, Address address) {
         return checkout(customerId, expectedCartVersion, key, address,
                 com.mongodb.modernization.petstore.payments.domain.Payment.APPROVED_DEMO_TOKEN);
     }
 
     @Override
+    /** Runs replay-safe checkout in one MongoDB transaction with bounded transient retries. */
     public Order checkout(String customerId, long expectedCartVersion, String key, Address address, String paymentToken) {
         // Checkout is safe to replay because its key is unique and the whole operation is transactional.
         return database.execute("orders.checkout", true,
                 () -> transactions.execute(status -> checkoutOnce(customerId, expectedCartVersion, key, address, paymentToken)));
     }
 
+    /** Executes one atomic checkout attempt, including inventory, order, payment, notification, and cart changes. */
     private Order checkoutOnce(String customerId, long expectedCartVersion, String key, Address address, String paymentToken) {
         var existing = orders.findByCustomerIdAndIdempotencyKey(customerId, key);
         if (existing.isPresent()) {
@@ -177,6 +188,7 @@ class MongoStorefrontStore implements StorefrontStore {
         }
     }
 
+    /** Enqueues the notification that corresponds to the order state produced by checkout. */
     private void enqueueCheckoutNotification(Order order) {
         var type = switch (order.status()) {
             case Order.BACKORDERED -> CustomerNotification.Type.ORDER_BACKORDERED;
@@ -186,14 +198,17 @@ class MongoStorefrontStore implements StorefrontStore {
         notifications.enqueue(order, type, order.createdAt());
     }
 
+    /** Finds the committed checkout result for a customer-owned idempotency key. */
     @Override public Optional<Order> orderByIdempotencyKey(String customerId, String key) {
         return database.execute("orders.by_idempotency", true,
                 () -> orders.findByCustomerIdAndIdempotencyKey(customerId, key).map(OrderDocument::toDomain));
     }
+    /** Returns a customer's orders in reverse creation order. */
     @Override public List<Order> orders(String customerId) {
         return database.execute("orders.by_customer", true, () -> orders
                 .findByCustomerIdOrderByCreatedAtDesc(customerId).stream().map(OrderDocument::toDomain).toList());
     }
+    /** Seeds the initial catalog without overwriting existing product data. */
     @Override public void seedIfEmpty() {
         database.execute("catalog.seed", false, () -> {
             for (var product : SeedProducts.all()) {
@@ -209,6 +224,7 @@ class MongoStorefrontStore implements StorefrontStore {
         });
     }
 
+    /** Rejects stale writes by comparing the expected and current optimistic-lock versions. */
     private static void requireVersion(long actual, long expected) {
         if (actual != expected) throw new StoreConflictException("Expected cart version " + expected + " but found " + actual);
     }

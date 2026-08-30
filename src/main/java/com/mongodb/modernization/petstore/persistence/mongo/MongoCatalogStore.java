@@ -34,6 +34,7 @@ class MongoCatalogStore implements CatalogStore {
     private final DatabaseExecutor database;
     private final Clock clock = Clock.systemUTC();
 
+    /** Creates a mongo catalog store and wires its required collaborators. */
     MongoCatalogStore(MongoProductRepository products, MongoCatalogChangeRepository changes, MongoTemplate template,
                       @Qualifier("mongoTransactionManager") PlatformTransactionManager transactionManager,
                       DatabaseExecutor database) {
@@ -41,16 +42,19 @@ class MongoCatalogStore implements CatalogStore {
         this.transactions = new TransactionTemplate(transactionManager); this.database = database;
     }
 
+    /** Executes the products persistence operation against the selected database. */
     @Override public List<Product> products() {
         return database.execute("admin.catalog.products.all", true, () -> products.findAll().stream()
                 .map(ProductDocument::toDomain).sorted(Comparator.comparing(Product::id)).toList());
     }
 
+    /** Executes the product persistence operation against the selected database. */
     @Override public Optional<Product> product(String id) {
         return database.execute("admin.catalog.product.by_id", true,
                 () -> products.findById(id).map(ProductDocument::toDomain));
     }
 
+    /** Creates . */
     @Override public Product create(Product requested, String changedBy) {
         try {
             return database.execute("admin.catalog.create", false, () -> transactions.execute(ignored -> {
@@ -67,6 +71,7 @@ class MongoCatalogStore implements CatalogStore {
         }
     }
 
+    /** Executes the update persistence operation against the selected database. */
     @Override public Product update(Product target, long expectedVersion, String changedBy) {
         return database.execute("admin.catalog.update", false, () -> transactions.execute(ignored -> {
             var before = products.findById(target.id()).map(ProductDocument::toDomain)
@@ -90,11 +95,13 @@ class MongoCatalogStore implements CatalogStore {
         }));
     }
 
+    /** Executes the changes persistence operation against the selected database. */
     @Override public List<CatalogChange> changes() {
         return database.execute("admin.catalog.changes.all", true, () -> changes.findAllByOrderByOccurredAtDesc()
                 .stream().map(CatalogChangeDocument::toDomain).toList());
     }
 
+    /** Creates replay. */
     private Product createReplay(Product existing, Product requested) {
         if (!sameCatalog(existing, requested)) {
             throw new StoreConflictException("Product ID already exists with different catalog details");
@@ -102,12 +109,14 @@ class MongoCatalogStore implements CatalogStore {
         return existing;
     }
 
+    /** Executes the change persistence operation against the selected database. */
     private CatalogChange change(CatalogChange.Action action, Product before, Product after, String changedBy) {
         return new CatalogChange(UUID.randomUUID().toString(), after.id(), action, changedBy, Instant.now(clock),
                 before == null ? null : before.price(), after.price(), before == null ? null : before.active(),
                 after.active(), before == null ? null : before.version(), after.version());
     }
 
+    /** Executes the same catalog persistence operation against the selected database. */
     private static boolean sameCatalog(Product left, Product right) {
         return left.productGroupId().equals(right.productGroupId()) && left.variantName().equals(right.variantName())
                 && left.categoryId().equals(right.categoryId()) && left.categoryName().equals(right.categoryName())

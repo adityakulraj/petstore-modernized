@@ -20,8 +20,10 @@ class SupplierPurchaseOrderDocument {
     @Version Long version;
     Instant processedAt;
 
+    /** Creates a supplier purchase order document and wires its required collaborators. */
     SupplierPurchaseOrderDocument() {}
 
+    /** Creates a supplier purchase order document and wires its required collaborators. */
     SupplierPurchaseOrderDocument(SupplierPurchaseOrder purchaseOrder) {
         id = purchaseOrder.id();
         orderId = purchaseOrder.orderId();
@@ -32,13 +34,16 @@ class SupplierPurchaseOrderDocument {
         processedAt = purchaseOrder.processedAt();
     }
 
+    /** Provides the persistence mapping behavior for mark processed. */
     void markProcessed(Instant when) {
         status = SupplierPurchaseOrder.Status.PROCESSED;
         processedAt = when;
     }
 
+    /** Provides the persistence mapping behavior for cancel. */
     void cancel() { status = SupplierPurchaseOrder.Status.CANCELLED; }
 
+    /** Maps this persistence representation to the corresponding domain model. */
     SupplierPurchaseOrder toDomain() {
         return new SupplierPurchaseOrder(id, orderId, customerId, createdAt, status,
                 lines.stream().map(OrderLineDocument::toDomain).toList(), version == null ? 0 : version, processedAt);

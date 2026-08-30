@@ -21,8 +21,10 @@ class FavoriteItemJpaEntity {
     @Column(name = "ITEM_ID", nullable = false, length = 40) String itemId;
     @Column(name = "ADDED_AT", nullable = false) Instant addedAt;
 
+    /** Creates a favorite item jpa entity and wires its required collaborators. */
     protected FavoriteItemJpaEntity() {}
 
+    /** Creates a favorite item jpa entity and wires its required collaborators. */
     FavoriteItemJpaEntity(String customerId, String itemId, Instant addedAt) {
         this.id = customerId + ":" + itemId;
         this.customerId = customerId;
@@ -30,6 +32,7 @@ class FavoriteItemJpaEntity {
         this.addedAt = addedAt;
     }
 
+    /** Maps this persistence representation to the corresponding domain model. */
     FavoriteItem toDomain() {
         return new FavoriteItem(customerId, itemId, addedAt);
     }

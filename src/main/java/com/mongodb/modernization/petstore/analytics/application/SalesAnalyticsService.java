@@ -38,16 +38,19 @@ public class SalesAnalyticsService {
     private final Clock clock;
 
     @Autowired
+    /** Creates a sales analytics service and wires its required collaborators. */
     public SalesAnalyticsService(SalesAnalyticsSource source, StorefrontStore storefront) {
         this(source, storefront, Clock.systemUTC());
     }
 
+    /** Creates a sales analytics service and wires its required collaborators. */
     SalesAnalyticsService(SalesAnalyticsSource source, StorefrontStore storefront, Clock clock) {
         this.source = source;
         this.storefront = storefront;
         this.clock = clock;
     }
 
+    /** Coordinates the report application use case. */
     public SalesAnalytics report(LocalDate from, LocalDate to, String requestedCategory) {
         validateRange(from, to);
         var products = storefront.products();
@@ -119,6 +122,7 @@ public class SalesAnalyticsService {
         return response;
     }
 
+    /** Coordinates the matching lines application use case. */
     private static List<LineWithProduct> matchingLines(List<OrderLine> lines, Map<String, Product> products,
                                                        String categoryId) {
         var result = new ArrayList<LineWithProduct>();
@@ -131,6 +135,7 @@ public class SalesAnalyticsService {
         return result;
     }
 
+    /** Coordinates the validate range application use case. */
     private static void validateRange(LocalDate from, LocalDate to) {
         if (from == null || to == null) throw new InvalidAnalyticsRangeException("Both from and to dates are required");
         if (from.isAfter(to)) throw new InvalidAnalyticsRangeException("from must be on or before to");
@@ -139,12 +144,16 @@ public class SalesAnalyticsService {
         }
     }
 
+    /** Coordinates the normalize category application use case. */
     private static String normalizeCategory(String category) {
         return category == null || category.isBlank() ? null : category.trim().toUpperCase(Locale.ROOT);
     }
 
+    /** Coordinates the money application use case. */
     private static BigDecimal money(BigDecimal value) { return value.setScale(2, RoundingMode.HALF_EVEN); }
+    /** Coordinates the status label application use case. */
     private static String statusLabel(String status) { return status.replace('_', ' '); }
+    /** Coordinates the status order application use case. */
     private static int statusOrder(String status) {
         return switch (status) {
             case Order.COMPLETED -> 0;
@@ -158,6 +167,7 @@ public class SalesAnalyticsService {
         };
     }
 
+    /** Coordinates the line with product application use case. */
     private record LineWithProduct(OrderLine line, Product product) {}
 
     private static final class MutableAggregate {
@@ -167,19 +177,27 @@ public class SalesAnalyticsService {
         private long units;
         private BigDecimal revenue = ZERO;
 
+        /** Coordinates the mutable aggregate application use case. */
         private MutableAggregate(String key, String label) { this.key = key; this.label = label; }
+        /** Coordinates the add order application use case. */
         private void addOrder(String orderId, long quantity, BigDecimal value) {
             orderIds.add(orderId); units += quantity; revenue = revenue.add(value);
         }
+        /** Coordinates the key application use case. */
         private String key() { return key; }
+        /** Coordinates the label application use case. */
         private String label() { return label; }
+        /** Coordinates the revenue application use case. */
         private BigDecimal revenue() { return revenue; }
+        /** Coordinates the breakdown application use case. */
         private SalesAnalytics.Breakdown breakdown() {
             return new SalesAnalytics.Breakdown(key, label, orderIds.size(), units, money(revenue));
         }
+        /** Coordinates the daily application use case. */
         private SalesAnalytics.DailyPoint daily() {
             return new SalesAnalytics.DailyPoint(LocalDate.parse(key), orderIds.size(), units, money(revenue));
         }
+        /** Coordinates the status application use case. */
         private SalesAnalytics.StatusPoint status() {
             return new SalesAnalytics.StatusPoint(key, orderIds.size(), money(revenue));
         }

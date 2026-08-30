@@ -24,11 +24,13 @@ public class DatabaseExecutor {
     private final DatabaseProperties properties;
     private final DatabaseTelemetry telemetry;
 
+    /** Creates a database executor and wires its required collaborators. */
     public DatabaseExecutor(DatabaseProperties properties, DatabaseTelemetry telemetry) {
         this.properties = properties;
         this.telemetry = telemetry;
     }
 
+    /** Executes an operation with telemetry and bounded jittered retries when replay is explicitly safe. */
     public <T> T execute(String operation, boolean retrySafe, Supplier<T> action) {
         long started = System.nanoTime();
         int retries = 0;
@@ -66,10 +68,12 @@ public class DatabaseExecutor {
         }
     }
 
+    /** Executes a void database operation through the same telemetry and retry policy. */
     public void execute(String operation, boolean retrySafe, Runnable action) {
         execute(operation, retrySafe, () -> { action.run(); return null; });
     }
 
+    /** Classifies nested MongoDB, JDBC, and Spring failures without retrying deterministic conflicts. */
     static boolean isRetryable(Throwable failure) {
         for (var cause = failure; cause != null; cause = cause.getCause()) {
             // Inspect every nested cause before treating Spring's outer data-integrity wrapper as deterministic.
@@ -94,6 +98,7 @@ public class DatabaseExecutor {
         return false;
     }
 
+    /** Calculates capped exponential equal jitter with a non-zero contention backoff floor. */
     static long jitteredDelayMillis(int retry, Duration initial, Duration maximum) {
         long exponent = 1L << Math.min(retry - 1, 20);
         long cap = Math.min(maximum.toMillis(), Math.multiplyExact(initial.toMillis(), exponent));

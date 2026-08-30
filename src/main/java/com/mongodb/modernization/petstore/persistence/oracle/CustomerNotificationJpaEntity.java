@@ -37,8 +37,10 @@ class CustomerNotificationJpaEntity {
     @Column(name = "READ_AT") Instant readAt;
     @Version long version;
 
+    /** Creates a customer notification jpa entity and wires its required collaborators. */
     protected CustomerNotificationJpaEntity() {}
 
+    /** Creates a customer notification jpa entity and wires its required collaborators. */
     CustomerNotificationJpaEntity(CustomerNotification notification) {
         id = notification.id(); customerId = notification.customerId(); orderId = notification.orderId();
         type = notification.type(); title = notification.title(); message = notification.message();
@@ -47,13 +49,16 @@ class CustomerNotificationJpaEntity {
         deliveredAt = notification.deliveredAt(); lastError = notification.lastError(); readAt = notification.readAt();
     }
 
+    /** Maps this persistence representation to the corresponding domain model. */
     CustomerNotification toDomain() {
         return new CustomerNotification(id, customerId, orderId, type, title, message, createdAt,
                 deliveryStatus, deliveryAttempts, nextAttemptAt, deliveredAt, lastError, readAt, version);
     }
 
+    /** Provides the persistence mapping behavior for mark read. */
     void markRead(Instant when) { readAt = when; }
 
+    /** Provides the persistence mapping behavior for mark delivered. */
     void markDelivered(Instant when) {
         deliveryStatus = CustomerNotification.DeliveryStatus.DELIVERED;
         deliveredAt = when;
@@ -62,6 +67,7 @@ class CustomerNotificationJpaEntity {
         deliveryAttempts++;
     }
 
+    /** Provides the persistence mapping behavior for record failure. */
     void recordFailure(int attempts, Instant retryAt, String error) {
         deliveryAttempts = attempts;
         nextAttemptAt = retryAt;
